@@ -52,7 +52,13 @@ func hash32(key string) uint32 {
 }
 
 func float32SliceToBytes(f []float32) []byte {
-	return unsafe.Slice((*byte)(unsafe.Pointer(&f[0])), len(f)*4)
+	if len(f) == 0 {
+		return nil
+	}
+	return unsafe.Slice(
+		(*byte)(unsafe.Pointer(unsafe.SliceData(f))),
+		len(f)*4,
+	)
 }
 func NewHashRing(numShards int, vnodes int) *HashRing {
 	r := &HashRing{
@@ -149,7 +155,11 @@ func writeVector(s *Shard, id uint32, vec []float32) {
 	dim := embed.Dim
 
 	offset := int64(id) * int64(dim*4)
-
+	size := int64(dim * 4)
+	end := offset + size
+	if end > int64(len(s.Mmap)) {
+		panic("mmap overflow")
+	}
 	copy(s.Mmap[offset:], float32SliceToBytes(vec))
 }
 
@@ -172,6 +182,9 @@ func shardWriter(s *Shard, ch <-chan PreparedDoc) {
 		if s.Batch.Size() >= batchSize {
 			s.Index.Batch(s.Batch)
 			s.Batch = s.Index.NewBatch()
+		}
+		if s.Batch.Size() > 0 {
+			s.Index.Batch(s.Batch)
 		}
 		fmt.Println("shard", s.ID, "indexed", doc.GlobalID)
 	}
