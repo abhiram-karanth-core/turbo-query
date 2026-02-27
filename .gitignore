@@ -31,5 +31,8 @@ main
 
 # OS X generated file
 .DS_Store
+# Ignore shard data
+internal/shard/data/
 
-wiki_120k.json
+# Ignore large wiki dump
+internal/shard/wiki_120k.json
