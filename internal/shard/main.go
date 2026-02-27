@@ -2,9 +2,8 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
 	"sync"
-
-	"github.com/blevesearch/bleve/v2"
 )
 
 var shardWg sync.WaitGroup
@@ -23,9 +22,17 @@ func main() {
 	shardChans := make([]chan PreparedDoc, numShards)
 	shards := make([]*Shard, numShards)
 
+	baseDir := "data"
+
 	for i := 0; i < numShards; i++ {
-		mapping := bleve.NewIndexMapping()
-		index, err := bleve.NewMemOnly(mapping)
+		shardDir := filepath.Join(baseDir, fmt.Sprintf("shard-%d", i))
+
+		vecFile, mmapBuf, err := initShardStorage(baseDir, i)
+		if err != nil {
+			panic(err)
+		}
+
+		index, err := initBleve(shardDir)
 		if err != nil {
 			panic(err)
 		}
@@ -35,10 +42,10 @@ func main() {
 			Index:     index,
 			NextDocID: 0,
 			DocMap:    make(map[string]uint32),
-			Mmap:      make([]byte, 1024*1024*100), // TEMP fake mmap
+			VecFile:   vecFile,
+			Mmap:      mmapBuf,
 			Batch:     index.NewBatch(),
 		}
-
 		shardChans[i] = make(chan PreparedDoc, 1000)
 
 		shardWg.Add(1)
@@ -70,5 +77,19 @@ func main() {
 	}()
 
 	shardWg.Wait()
+	for i := 0; i < numShards; i++ {
+		shardDir := filepath.Join(baseDir, fmt.Sprintf("shard-%d", i))
+
+		// flush docmap
+		if err := saveDocMap(shardDir, shards[i].DocMap); err != nil {
+			fmt.Println("docmap save error:", err)
+		}
+		// unmap
+		shards[i].Mmap.Unmap()
+		// close vector file
+		shards[i].VecFile.Close()
+		// close bleve
+		shards[i].Index.Close()
+	}
 	fmt.Println("Indexing complete")
 }

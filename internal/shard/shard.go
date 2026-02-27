@@ -12,6 +12,7 @@ import (
 	"unsafe"
 
 	"github.com/blevesearch/bleve/v2"
+	mmap "github.com/edsrzf/mmap-go"
 )
 
 type Shard struct {
@@ -20,7 +21,7 @@ type Shard struct {
 	NextDocID uint32
 	DocMap    map[string]uint32
 	VecFile   *os.File
-	Mmap      []byte
+	Mmap      mmap.MMap
 	Batch     *bleve.Batch
 }
 
@@ -42,8 +43,14 @@ type PreparedDoc struct {
 }
 type HashRing struct {
 	positions []uint32       // sorted
-	shardMap  map[uint32]int // position → shardID
+	shardMap  map[uint32]int // position -> shardID
 }
+
+const (
+	vectorDim       = embed.Dim
+	vectorBytes     = vectorDim * 4
+	maxDocsPerShard = 70000
+)
 
 func hash32(key string) uint32 {
 	h := fnv.New32a()
@@ -138,7 +145,7 @@ func worker(jobs <-chan IndexJob, out chan<- PreparedDoc) {
 			Text:     job.Text,
 			Vector:   vec,
 		}
-		fmt.Println("embedded", job.ID)
+		// fmt.Println("embedded", job.ID)
 	}
 }
 
@@ -160,7 +167,7 @@ func writeVector(s *Shard, id uint32, vec []float32) {
 	if end > int64(len(s.Mmap)) {
 		panic("mmap overflow")
 	}
-	copy(s.Mmap[offset:], float32SliceToBytes(vec))
+	copy(s.Mmap[offset:end], float32SliceToBytes(vec))
 }
 
 const batchSize = 100
@@ -183,9 +190,10 @@ func shardWriter(s *Shard, ch <-chan PreparedDoc) {
 			s.Index.Batch(s.Batch)
 			s.Batch = s.Index.NewBatch()
 		}
-		if s.Batch.Size() > 0 {
-			s.Index.Batch(s.Batch)
-		}
+
 		fmt.Println("shard", s.ID, "indexed", doc.GlobalID)
+	}
+	if s.Batch.Size() > 0 {
+		s.Index.Batch(s.Batch)
 	}
 }

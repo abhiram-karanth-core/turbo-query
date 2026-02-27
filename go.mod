@@ -4,6 +4,7 @@ go 1.25.1
 
 require (
 	github.com/blevesearch/bleve/v2 v2.5.7
+	github.com/edsrzf/mmap-go v1.2.0
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/go-chi/cors v1.2.2
 	github.com/joho/godotenv v1.5.1
