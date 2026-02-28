@@ -26,8 +26,9 @@ type Shard struct {
 }
 
 type IndexJob struct {
-	ID   string
-	Text string
+	ID    string
+	Title string
+	Text  string
 }
 
 type WikiDoc struct {
@@ -38,6 +39,7 @@ type WikiDoc struct {
 
 type PreparedDoc struct {
 	GlobalID string
+	Title    string
 	Text     string
 	Vector   []float32
 }
@@ -128,8 +130,9 @@ func ingestWiki(path string, jobs chan<- IndexJob) error {
 		}
 
 		jobs <- IndexJob{
-			ID:   doc.ID,
-			Text: doc.Title + " " + doc.Text,
+			ID:    doc.ID,
+			Text:  doc.Text,
+			Title: doc.Title,
 		}
 	}
 
@@ -138,10 +141,11 @@ func ingestWiki(path string, jobs chan<- IndexJob) error {
 
 func worker(jobs <-chan IndexJob, out chan<- PreparedDoc) {
 	for job := range jobs {
-		vec := embed.Embed(job.Text)
+		vec := embed.Embed(job.Title + " " +job.Text)
 
 		out <- PreparedDoc{
 			GlobalID: job.ID,
+			Title:    job.Title,
 			Text:     job.Text,
 			Vector:   vec,
 		}
@@ -183,6 +187,7 @@ func shardWriter(s *Shard, ch <-chan PreparedDoc) {
 		s.DocMap[doc.GlobalID] = localID
 
 		s.Batch.Index(doc.GlobalID, map[string]interface{}{
+			"title":doc.Title,
 			"text": doc.Text,
 		})
 
