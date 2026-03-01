@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"time"
 )
@@ -26,6 +27,22 @@ type embeddingResponse struct {
 	Embedding []float64 `json:"embedding"`
 }
 
+func normalize(vec []float32) {
+	var sum float64
+	for _, v := range vec {
+		sum += float64(v * v)
+	}
+
+	norm := float32(math.Sqrt(sum))
+	if norm == 0 {
+		return
+	}
+
+	inv := 1.0 / norm
+	for i := range vec {
+		vec[i] *= inv
+	}
+}
 func Embed(text string) []float32 {
 	reqBody := embeddingRequest{
 		Model:  modelName,
@@ -43,7 +60,7 @@ func Embed(text string) []float32 {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := httpClient.Do(req) 
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		panic(err)
 	}
@@ -63,6 +80,9 @@ func Embed(text string) []float32 {
 	for i, v := range result.Embedding {
 		vec[i] = float32(v)
 	}
-
+	normalize(vec)
 	return vec
 }
+//pre normalizing the vectors so that Cosine becomes dot product only.
+//global normalization
+//more consistent ranking
