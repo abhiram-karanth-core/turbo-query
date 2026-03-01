@@ -1,5 +1,3 @@
-
-
 services:
   shard0:
     build: .
@@ -8,7 +6,9 @@ services:
       - PORT=8080
       - SHARD_ID=0
     volumes:
-      - ./data/shard-0:/data
+      - ./internal/data/shard-0:/data
+    ports:
+      - "9001:8080"
     networks:
       - turbo-net
 
@@ -19,7 +19,9 @@ services:
       - PORT=8080
       - SHARD_ID=1
     volumes:
-      - ./data/shard-1:/data
+      - ./internal/data/shard-1:/data
+    ports:
+      - "9002:8080"
     networks:
       - turbo-net
 
@@ -30,7 +32,9 @@ services:
       - PORT=8080
       - SHARD_ID=2
     volumes:
-      - ./data/shard-2:/data
+      - ./internal/data/shard-2:/data
+    ports:
+      - "9003:8080"
     networks:
       - turbo-net
 
@@ -41,9 +45,24 @@ services:
       - PORT=8080
       - SHARD_ID=3
     volumes:
-      - ./data/shard-3:/data
+      - ./internal/data/shard-3:/data
+    ports:
+      - "9004:8080"
+    networks:
+      - turbo-net
+
+  ollama:
+    image: ollama/ollama:latest  
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
     networks:
       - turbo-net
 
 networks:
   turbo-net:
+
+volumes:
+  ollama-data:
