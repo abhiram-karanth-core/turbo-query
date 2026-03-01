@@ -1,0 +1,49 @@
+
+
+services:
+  shard0:
+    build: .
+    container_name: shard0
+    environment:
+      - PORT=8080
+      - SHARD_ID=0
+    volumes:
+      - ./data/shard-0:/data
+    networks:
+      - turbo-net
+
+  shard1:
+    build: .
+    container_name: shard1
+    environment:
+      - PORT=8080
+      - SHARD_ID=1
+    volumes:
+      - ./data/shard-1:/data
+    networks:
+      - turbo-net
+
+  shard2:
+    build: .
+    container_name: shard2
+    environment:
+      - PORT=8080
+      - SHARD_ID=2
+    volumes:
+      - ./data/shard-2:/data
+    networks:
+      - turbo-net
+
+  shard3:
+    build: .
+    container_name: shard3
+    environment:
+      - PORT=8080
+      - SHARD_ID=3
+    volumes:
+      - ./data/shard-3:/data
+    networks:
+      - turbo-net
+
+networks:
+  turbo-net:
