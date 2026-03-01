@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"time"
 	"turbo-query/internal/embed"
 
 	"github.com/blevesearch/bleve/v2"
@@ -50,6 +51,13 @@ func dot(a, b []float32) float64 {
 	return sum
 }
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	defer func() {
+		log.Printf("shard=%s latency=%v",
+			s.shardID,
+			time.Since(start),
+		)
+	}()
 	var req SearchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -66,7 +74,6 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ---------- BM25 search ----------
 	query := bleve.NewMatchQuery(req.Query)
 
 	searchReq := bleve.NewSearchRequestOptions(query, rerankWindow, 0, false)
@@ -82,7 +89,6 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ---------- normalize BM25 ----------
 	maxBM25 := res.Hits[0].Score
 	if maxBM25 == 0 {
 		maxBM25 = 1
@@ -90,7 +96,6 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	hits := make([]SearchHit, 0, req.TopK)
 
-	// ---------- hybrid scoring ----------
 	for _, hit := range res.Hits {
 		docID64, _ := strconv.ParseUint(hit.ID, 10, 32)
 		docID := uint32(docID64)
@@ -106,7 +111,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		normBM25 := hit.Score / maxBM25
 
 		final := 0.7*normBM25 + 0.3*normCos
-		
+
 		var title, text string
 
 		if v, ok := hit.Fields["title"].(string); ok {
@@ -124,7 +129,6 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// ---------- local topK ----------
 	sort.Slice(hits, func(i, j int) bool {
 		return hits[i].Score > hits[j].Score
 	})
