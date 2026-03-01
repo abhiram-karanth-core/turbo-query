@@ -51,10 +51,22 @@ func initShardStorage(baseDir string, shardID int) (*os.File, mmap.MMap, error) 
 func initBleve(shardDir string) (bleve.Index, error) {
 	indexPath := filepath.Join(shardDir, "index.bleve")
 
-	mapping := bleve.NewIndexMapping()
-	return bleve.New(indexPath, mapping)
-}
+	titleField := bleve.NewTextFieldMapping()
+	titleField.Store = true
 
+	textField := bleve.NewTextFieldMapping()
+	textField.Store = true
+
+
+	docMapping := bleve.NewDocumentMapping()
+	docMapping.AddFieldMappingsAt("title", titleField)
+	docMapping.AddFieldMappingsAt("text", textField)
+
+	indexMapping := bleve.NewIndexMapping()
+	indexMapping.DefaultMapping = docMapping
+
+	return bleve.New(indexPath, indexMapping)
+}
 func saveDocMap(shardDir string, docMap map[string]uint32) error {
 	path := filepath.Join(shardDir, "docmap.json")
 

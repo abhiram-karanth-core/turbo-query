@@ -17,6 +17,7 @@ var httpClient = &http.Client{
 }
 
 const ollamaURL = "http://ollama:11434/api/embeddings"
+// const ollamaURL = "http://localhost:11434/api/embeddings"
 const modelName = "all-minilm"
 
 type embeddingRequest struct {

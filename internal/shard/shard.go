@@ -141,7 +141,21 @@ func ingestWiki(path string, jobs chan<- IndexJob) error {
 
 func worker(jobs <-chan IndexJob, out chan<- PreparedDoc) {
 	for job := range jobs {
-		vec := embed.Embed(job.Title + " " +job.Text)
+		const maxEmbedChars = 800
+		text := job.Title + " " + job.Text
+		if len(text) > maxEmbedChars {
+			text = text[:maxEmbedChars]
+		}
+		vec := embed.Embed(text)
+			//fallback
+		if len(vec) == 0 && len(text) > 200 {
+			text = text[:200]
+			vec = embed.Embed(text)
+		}
+
+		if len(vec) == 0 {
+			continue
+		}
 
 		out <- PreparedDoc{
 			GlobalID: job.ID,
@@ -187,8 +201,8 @@ func shardWriter(s *Shard, ch <-chan PreparedDoc) {
 		s.DocMap[doc.GlobalID] = localID
 
 		s.Batch.Index(doc.GlobalID, map[string]interface{}{
-			"title":doc.Title,
-			"text": doc.Text,
+			"title": doc.Title,
+			"text":  doc.Text,
 		})
 
 		if s.Batch.Size() >= batchSize {
