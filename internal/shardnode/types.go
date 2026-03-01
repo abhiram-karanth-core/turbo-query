@@ -6,11 +6,12 @@ type SearchRequest struct {
 }
 
 type SearchHit struct {
-	DocID      string  `json:"doc_id"`
-	Score      float64 `json:"score"`
-	ShardID    string  `json:"shard_id"`
+	DocID   string  `json:"doc_id"`
+	Score   float64 `json:"score"`
+	ShardID string  `json:"shard_id"`
+	Title   string  `json:"title"`
+	Text    string  `json:"text"`
 }
-
 type SearchResponse struct {
 	Hits []SearchHit `json:"hits"`
 }
