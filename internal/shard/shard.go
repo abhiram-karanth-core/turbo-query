@@ -7,6 +7,7 @@ import (
 	"hash/fnv"
 	"os"
 	"sort"
+	"strconv"
 
 	"turbo-query/internal/embed"
 	"unsafe"
@@ -19,7 +20,6 @@ type Shard struct {
 	ID        int
 	Index     bleve.Index
 	NextDocID uint32
-	DocMap    map[string]uint32
 	VecFile   *os.File
 	Mmap      mmap.MMap
 	Batch     *bleve.Batch
@@ -147,7 +147,7 @@ func worker(jobs <-chan IndexJob, out chan<- PreparedDoc) {
 			text = text[:maxEmbedChars]
 		}
 		vec := embed.Embed(text)
-			//fallback
+		//fallback
 		if len(vec) == 0 && len(text) > 200 {
 			text = text[:200]
 			vec = embed.Embed(text)
@@ -197,12 +197,10 @@ func shardWriter(s *Shard, ch <-chan PreparedDoc) {
 		s.NextDocID++
 
 		writeVector(s, localID, doc.Vector)
-
-		s.DocMap[doc.GlobalID] = localID
-
-		s.Batch.Index(doc.GlobalID, map[string]interface{}{
-			"title": doc.Title,
-			"text":  doc.Text,
+		s.Batch.Index(strconv.Itoa(int(localID)), map[string]interface{}{
+			"wiki_id": doc.GlobalID,
+			"title":   doc.Title,
+			"text":    doc.Text,
 		})
 
 		if s.Batch.Size() >= batchSize {
