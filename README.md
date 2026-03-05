@@ -22,7 +22,7 @@ Turbo Query is a high-performance distributed search system that combines BM25 k
 ```
 User Query
     ↓
-Coordinator (fan-out — pending)
+Coordinator (fan-out)
     ↓
 Shard Servers (parallel)
     ↓
@@ -133,3 +133,36 @@ Once accessed, the vectors remain in the **OS page cache**, allowing subsequent 
 - Shard queries are executed **in parallel**, so total latency approximates the **slowest shard**.
 - `mmap` allows efficient vector access without deserializing vectors into heap memory.
 - Warm queries benefit from the **Linux page cache**, eliminating disk access.
+
+---
+## Querying the API
+
+Once the coordinator and shard servers are running, queries can be sent to the coordinator endpoint.
+
+### Example Request
+```bash
+curl -X POST http://localhost:8080/search \
+  -H "Content-Type: application/json" \
+  -d '{"query":"microsoft","top_k":5}'
+```
+
+### Pretty Printed Output
+```bash
+curl -s -X POST http://localhost:8080/search \
+  -H "Content-Type: application/json" \
+  -d '{"query":"cricket","top_k":5}' \
+  | python -m json.tool
+```
+
+### Example Response
+```json
+[
+  {
+    "doc_id": "26277",
+    "score": 0.92,
+    "title": "Microsoft"
+  }
+]
+```
+
+---
