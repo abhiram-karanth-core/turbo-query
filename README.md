@@ -36,8 +36,8 @@ Top-K merge → Response
 Each shard maintains:
 
 - A **Bleve** inverted index for keyword retrieval
-- A **memory-mapped** dense vector store (`vectors.bin`)
-- A shard-local document ID mapping
+- A **memory-mapped dense vector store** (`vectors.bin`)
+- **Shard-local sequential document IDs** used for both Bleve and vector offsets
 - An HTTP search endpoint
 
 ---
@@ -81,7 +81,7 @@ The offline indexer performs:
 3. Vector normalization and mmap write
 4. Consistent hash routing to shards
 5. Bleve batch indexing
-6. DocID alignment persistence
+6. Sequential shard-local ID assignment for direct vector lookup
 
 > Document and query vectors are L2-normalized so cosine similarity can be computed efficiently via dot product.
 
