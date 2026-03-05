@@ -1,7 +1,6 @@
 package shardnode
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -18,7 +17,6 @@ type Server struct {
 	port    int
 	shardID string
 	index   bleve.Index
-	docMap  map[string]string
 	mmapBuf mmap.MMap
 }
 
@@ -45,21 +43,10 @@ func NewServer() *http.Server {
 
 	indexPath := "/data/index.bleve"
 	vectorPath := "/data/vectors.bin"
-	docmapPath := "/data/docmap.json"
 
 	idx, err := bleve.Open(indexPath)
 	if err != nil {
 		log.Fatalf("failed to open index: %v", err)
-	}
-
-	docBytes, err := os.ReadFile(docmapPath)
-	if err != nil {
-		log.Fatalf("failed to read docmap: %v", err)
-	}
-
-	var docMap map[string]string
-	if err := json.Unmarshal(docBytes, &docMap); err != nil {
-		log.Fatalf("failed to unmarshal docmap: %v", err)
 	}
 
 	vecFile, err := os.Open(vectorPath)
@@ -76,7 +63,7 @@ func NewServer() *http.Server {
 		port:    port,
 		shardID: shardID,
 		index:   idx,
-		docMap:  docMap,
+
 		mmapBuf: mmapBuf,
 	}
 
