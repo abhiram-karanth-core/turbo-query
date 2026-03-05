@@ -102,38 +102,36 @@ final_score = 0.7 * BM25_norm + 0.3 * cosine_norm
 
 ---
 
-## Performance Notes
-
-- Typical shard latency per shard: **~10–15 ms** (local)
-- Embedding generation dominates query cost
-- `mmap` enables zero-copy vector access
-- Hybrid reranking window is configurable
-
+---
 ---
 
-## Current Status
+## Query Performance Metrics
 
-### Completed
+Measurements taken on a local multi-shard deployment with parallel coordinator fan-out.
 
-- Shard-local hybrid search
-- Vector mmap store
-- Bleve field hydration
-- Embedding pipeline hardening
-- Per-shard latency logging
+| Scenario | Latency |
+|--------|--------|
+| Cold query (first request after startup) | **~200 ms** |
+| Warm query (page cache populated) | **~25–40 ms total** |
+| Per-shard search latency | **10–15 ms** |
 
-### In Progress
+### Why the first query is slower
 
-- Distributed coordinator fan-out
-- Cross-shard top-K merge
-- Tail-latency analysis
-- Query result caching
+The first query triggers **memory page faults** as the OS loads vector data from disk into the page cache due to the `mmap`-backed vector store.
 
----
+Once accessed, the vectors remain in the **OS page cache**, allowing subsequent queries to perform **zero-copy memory reads**, reducing latency significantly.
 
-## Future Improvements
+### Query Execution Breakdown
 
-- Coordinator fan-out and result merging
-- Document chunking for long texts
-- ANN acceleration (HNSW / IVF)
-- Query result caching
-- Adaptive hybrid weighting
+1. Query embedding generation (MiniLM via Ollama)
+2. Coordinator parallel fan-out to shards
+3. BM25 candidate retrieval
+4. Dense vector similarity scoring using mmap-backed vectors
+5. Hybrid score fusion
+6. Top-K merge
+
+### Notes
+
+- Shard queries are executed **in parallel**, so total latency approximates the **slowest shard**.
+- `mmap` allows efficient vector access without deserializing vectors into heap memory.
+- Warm queries benefit from the **Linux page cache**, eliminating disk access.
