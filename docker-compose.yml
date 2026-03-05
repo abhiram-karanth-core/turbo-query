@@ -50,9 +50,24 @@ services:
       - "9004:8080"
     networks:
       - turbo-net
-
+  coordinator:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: coordinator
+    environment:
+      - PORT=8080
+    ports:
+      - "8080:8080"
+    depends_on:
+      - shard0
+      - shard1
+      - shard2
+      - shard3
+    networks:
+      - turbo-net
   ollama:
-    image: ollama/ollama:latest  
+    image: ollama/ollama:latest
     container_name: ollama
     ports:
       - "11434:11434"
@@ -63,6 +78,7 @@ services:
 
 networks:
   turbo-net:
+
 
 volumes:
   ollama-data:
