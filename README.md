@@ -2,8 +2,6 @@
 
 Turbo Query is a high-performance distributed search system that combines BM25 keyword retrieval with semantic vector search using MiniLM embeddings. The project demonstrates production-style search infrastructure concepts including sharding, fan-out querying, mmap vector storage, and hybrid ranking.
 
-> **Note:** This checkpoint covers per-shard querying only. Parallel coordinator fan-out is not yet implemented.
-
 ---
 
 ## Features
