@@ -7,10 +7,16 @@ import (
 	"net/http"
 	"sort"
 	"sync"
+	"time"
 )
 
 func (s *Server) SearchHandler(w http.ResponseWriter, r *http.Request) {
-
+	start := time.Now()
+	defer func() {
+		log.Printf("fanout latency=%v",
+			time.Since(start),
+		)
+	}()
 	var req struct {
 		Query string `json:"query"`
 		TopK  int    `json:"top_k"`
