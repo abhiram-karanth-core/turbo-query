@@ -15,6 +15,13 @@ type Server struct {
 	httpClient *http.Client
 	shards     []string
 }
+type Result struct {
+	DocID   string  `json:"doc_id"`
+	Score   float64 `json:"score"`
+	ShardID string  `json:"shard_id"`
+	Title   string  `json:"title"`
+	Text    string  `json:"text"`
+}
 
 func NewServer() *http.Server {
 	portStr := os.Getenv("PORT")
