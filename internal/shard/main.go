@@ -41,7 +41,6 @@ func main() {
 			ID:        i,
 			Index:     index,
 			NextDocID: 0,
-			DocMap:    make(map[string]uint32),
 			VecFile:   vecFile,
 			Mmap:      mmapBuf,
 			Batch:     index.NewBatch(),
@@ -78,12 +77,6 @@ func main() {
 
 	shardWg.Wait()
 	for i := 0; i < numShards; i++ {
-		shardDir := filepath.Join(baseDir, fmt.Sprintf("shard-%d", i))
-
-		// flush docmap
-		if err := saveDocMap(shardDir, shards[i].DocMap); err != nil {
-			fmt.Println("docmap save error:", err)
-		}
 		// unmap
 		shards[i].Mmap.Unmap()
 		// close vector file
