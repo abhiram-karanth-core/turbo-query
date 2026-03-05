@@ -30,7 +30,7 @@ func (s *Server) RegisterRoutes() http.Handler {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	r.Post("/search", s.handleSearch)
+	r.Post("/search", s.SearchHandler)
 
 	return r
 }
