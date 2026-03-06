@@ -159,8 +159,17 @@ curl -s -X POST http://localhost:8080/search \
 [
   {
     "doc_id": "26277",
-    "score": 0.92,
-    "title": "Microsoft"
+    "score": 0.9259,
+    "shard_id": "3",
+    "title": "Microsoft Flight Simulator",
+    "text": "Microsoft Flight Simulator is a series of flight simulation video games..."
+  },
+  {
+    "doc_id": "20140",
+    "score": 0.9179,
+    "shard_id": "0",
+    "title": "Microsoft FrontPage",
+    "text": "Microsoft FrontPage is a discontinued WYSIWYG HTML editor..."
   }
 ]
 ```
