@@ -100,9 +100,6 @@ final_score = 0.7 * BM25_norm + 0.3 * cosine_norm
 
 ---
 
----
----
-
 ## Query Performance Metrics
 
 Measurements taken on a local multi-shard deployment with parallel coordinator fan-out.
