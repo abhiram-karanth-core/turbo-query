@@ -30,15 +30,42 @@ func (s *Server) SearchHandler(w http.ResponseWriter, r *http.Request) {
 	if req.TopK <= 0 {
 		req.TopK = 10
 	}
+	ctx := r.Context()
+	cacheKey := "search:" + req.Query
 
-	results, err := s.FanoutSearch(req.Query)
+	if cached, err := s.redisClient.Get(ctx, cacheKey); err == nil {
+		log.Printf("cache HIT query=%q", req.Query)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Cache", "HIT")
+		w.Write(cached)
+		return
+	}
+	val, err, _ := s.sf.Do(cacheKey, func() (interface{}, error) {
+
+		results, err := s.FanoutSearch(req.Query)
+		if err != nil {
+			return nil, err
+		}
+
+		encoded, err := json.Marshal(results)
+		if err != nil {
+			return nil, err
+		}
+
+		s.redisClient.Set(ctx, cacheKey, encoded, 5*time.Minute)
+
+		return encoded, nil
+	})
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	log.Println("coordinator received query:", req.Query)
+
+	encoded := val.([]byte)
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(results)
+	w.Header().Set("X-Cache", "MISS")
+	w.Write(encoded)
 }
 func (s *Server) FanoutSearch(query string) ([]Result, error) {
 
