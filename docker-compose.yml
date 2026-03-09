@@ -75,6 +75,13 @@ services:
       - ollama-data:/root/.ollama
     networks:
       - turbo-net
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    networks:
+      - turbo-net
 
 networks:
   turbo-net:
