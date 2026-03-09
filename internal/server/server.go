@@ -5,15 +5,20 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"time"
+	"time"	
+	"golang.org/x/sync/singleflight"
+
+	redisclient "turbo-query/internal/redis"
 
 	_ "github.com/joho/godotenv/autoload"
 )
 
 type Server struct {
-	port       int
-	httpClient *http.Client
-	shards     []string
+	port        int
+	httpClient  *http.Client
+	shards      []string
+	redisClient *redisclient.Client
+	sf          singleflight.Group
 }
 type Result struct {
 	DocID   string  `json:"doc_id"`
@@ -33,7 +38,10 @@ func NewServer() *http.Server {
 	if err != nil {
 		port = 8080
 	}
-
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		redisAddr = "redis:6379"
+	}
 	srv := &Server{
 		port: port,
 		httpClient: &http.Client{
@@ -45,6 +53,7 @@ func NewServer() *http.Server {
 			"http://shard2:8080",
 			"http://shard3:8080",
 		},
+		redisClient: redisclient.NewClient(redisAddr),
 	}
 
 	server := &http.Server{
