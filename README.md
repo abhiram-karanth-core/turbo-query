@@ -123,11 +123,9 @@ Measurements taken on a local multi-shard deployment with parallel coordinator f
 
 ### Why cold queries are slower
 
-When a query is executed for the first time after startup, the memory-mapped vector files may not yet be present in the Linux page cache. Accessing these vectors triggers **page faults** as the OS loads the corresponding pages from disk.
-
-Once accessed, the pages remain in the **OS page cache**, allowing subsequent queries to perform **zero-copy reads** directly from memory.
-
-If Redis caching is enabled, repeated queries may be served entirely from the cache, bypassing the search pipeline and eliminating both disk and page-cache access.
+When a query is executed for the first time after startup, the memory-mapped vector files may not yet be present in the Linux page cache. Accessing these vectors triggers page faults as the OS loads the corresponding pages from disk.
+Once accessed, the pages remain in the OS page cache, allowing subsequent queries to perform zero-copy reads directly from memory.
+If Redis caching is enabled, repeated identical queries are served entirely from the cache, bypassing the search pipeline and eliminating both disk and page-cache access. For queries that are similar but not identical — such as "microsoft" followed by "microsoft stocks" — Redis provides no cache benefit, but the relevant vector pages are likely already warm in the OS page cache, since semantically related documents tend to occupy nearby offsets in the mmap file.
 
 ### Query Execution Breakdown
 
