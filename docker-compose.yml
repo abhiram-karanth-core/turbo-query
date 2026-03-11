@@ -75,6 +75,13 @@ services:
       - ollama-data:/root/.ollama
     networks:
       - turbo-net
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
   redis:
     image: redis:7-alpine
     ports:
