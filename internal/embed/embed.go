@@ -16,8 +16,9 @@ var httpClient = &http.Client{
 	Timeout: 60 * time.Second,
 }
 
-const ollamaURL = "http://ollama:11434/api/embeddings"
+// const ollamaURL = "http://ollama:11434/api/embeddings"
 // const ollamaURL = "http://127.0.0.1:11434/api/embeddings"
+const ollamaURL = "http://host.docker.internal:11434/api/embeddings"
 const modelName = "all-minilm"
 
 type embeddingRequest struct {
