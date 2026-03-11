@@ -3,6 +3,7 @@ package shardnode
 type SearchRequest struct {
 	Query string `json:"query"`
 	TopK  int    `json:"top_k"`
+	Vector []float32 `json:"vector"`
 }
 
 type SearchHit struct {
