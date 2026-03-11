@@ -17,7 +17,7 @@ var httpClient = &http.Client{
 }
 
 const ollamaURL = "http://ollama:11434/api/embeddings"
-// const ollamaURL = "http://localhost:11434/api/embeddings"
+// const ollamaURL = "http://127.0.0.1:11434/api/embeddings"
 const modelName = "all-minilm"
 
 type embeddingRequest struct {
@@ -96,7 +96,7 @@ func Embed(text string) []float32 {
 	for i, v := range result.Embedding {
 		vec[i] = float32(v)
 	}
-	log.Println("embedding length:", len(vec))
+	// log.Println("embedding length:", len(vec))
 	normalize(vec)
 	return vec
 }
