@@ -8,6 +8,7 @@ import (
 	"sort"
 	"sync"
 	"time"
+	"turbo-query/internal/embed"
 )
 
 func (s *Server) SearchHandler(w http.ResponseWriter, r *http.Request) {
@@ -20,6 +21,7 @@ func (s *Server) SearchHandler(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Query string `json:"query"`
 		TopK  int    `json:"top_k"`
+		Vector []float32 `json:"vector"` 
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -71,7 +73,7 @@ func (s *Server) FanoutSearch(query string) ([]Result, error) {
 
 	var wg sync.WaitGroup
 	resultsChan := make(chan []Result, len(s.shards))
-
+	qvec := embed.Embed(query)
 	for _, shard := range s.shards {
 
 		wg.Add(1)
@@ -79,7 +81,7 @@ func (s *Server) FanoutSearch(query string) ([]Result, error) {
 		go func(shardURL string) {
 			defer wg.Done()
 
-			res, err := s.queryShard(shardURL, query)
+			res, err := s.queryShard(shardURL, query, qvec)
 			if err != nil {
 				log.Println("shard error:", shardURL, err)
 				return
@@ -104,11 +106,12 @@ func (s *Server) FanoutSearch(query string) ([]Result, error) {
 	return mergeTopK(allResults, 10), nil
 }
 
-func (s *Server) queryShard(shardURL, query string) ([]Result, error) {
+func (s *Server) queryShard(shardURL, query string, qvec []float32) ([]Result, error) {
 
 	body := map[string]interface{}{
 		"query": query,
 		"top_k": 10,
+		"vector": qvec,
 	}
 
 	buf, err := json.Marshal(body)
