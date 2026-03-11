@@ -51,7 +51,7 @@ type HashRing struct {
 const (
 	vectorDim       = embed.Dim
 	vectorBytes     = vectorDim * 4
-	maxDocsPerShard = 70000
+	maxDocsPerShard = 100000
 )
 
 func hash32(key string) uint32 {
@@ -191,6 +191,7 @@ func writeVector(s *Shard, id uint32, vec []float32) {
 const batchSize = 100
 
 func shardWriter(s *Shard, ch <-chan PreparedDoc) {
+
 	for doc := range ch {
 
 		localID := s.NextDocID
@@ -208,7 +209,9 @@ func shardWriter(s *Shard, ch <-chan PreparedDoc) {
 			s.Batch = s.Index.NewBatch()
 		}
 
-		fmt.Println("shard", s.ID, "indexed", doc.GlobalID)
+		if s.NextDocID % 600 == 0 {
+            fmt.Printf("shard-%d: %d docs\n", s.ID, s.NextDocID)
+        }
 	}
 	if s.Batch.Size() > 0 {
 		s.Index.Batch(s.Batch)
