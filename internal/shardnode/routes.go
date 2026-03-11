@@ -9,8 +9,6 @@ import (
 	"sort"
 	"strconv"
 	"time"
-	"turbo-query/internal/embed"
-
 	"github.com/blevesearch/bleve/v2"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -68,7 +66,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		req.TopK = 10
 	}
 
-	qvec := embed.Embed(req.Query)
+	qvec := req.Vector
 	if len(qvec) == 0 {
 		http.Error(w, "embedding failed", http.StatusInternalServerError)
 		return
