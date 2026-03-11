@@ -19,9 +19,9 @@ func (s *Server) SearchHandler(w http.ResponseWriter, r *http.Request) {
 		)
 	}()
 	var req struct {
-		Query string `json:"query"`
-		TopK  int    `json:"top_k"`
-		Vector []float32 `json:"vector"` 
+		Query  string    `json:"query"`
+		TopK   int       `json:"top_k"`
+		Vector []float32 `json:"vector"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -73,7 +73,9 @@ func (s *Server) FanoutSearch(query string) ([]Result, error) {
 
 	var wg sync.WaitGroup
 	resultsChan := make(chan []Result, len(s.shards))
+	embedStart := time.Now()
 	qvec := embed.Embed(query)
+	log.Printf("embed latency=%v", time.Since(embedStart))
 	for _, shard := range s.shards {
 
 		wg.Add(1)
@@ -109,8 +111,8 @@ func (s *Server) FanoutSearch(query string) ([]Result, error) {
 func (s *Server) queryShard(shardURL, query string, qvec []float32) ([]Result, error) {
 
 	body := map[string]interface{}{
-		"query": query,
-		"top_k": 10,
+		"query":  query,
+		"top_k":  10,
 		"vector": qvec,
 	}
 
