@@ -66,22 +66,6 @@ services:
       - shard3
     networks:
       - turbo-net
-  ollama:
-    image: ollama/ollama:latest
-    container_name: ollama
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama-data:/root/.ollama
-    networks:
-      - turbo-net
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
   redis:
     image: redis:7-alpine
     ports:
