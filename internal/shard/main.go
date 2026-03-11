@@ -68,7 +68,7 @@ func main() {
 	go router(ring, prepared, shardChans)
 
 	go func() {
-		err := ingestWiki("wiki_120k.json", jobs)
+		err := ingestWiki("filtered.json", jobs)
 		if err != nil {
 			fmt.Println("ingest error:", err)
 		}
