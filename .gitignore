@@ -36,3 +36,6 @@ internal/data/
 
 # Ignore large wiki dump
 internal/shard/wiki_120k.json
+internal/shard/filtered.json
+
+.gitignore
