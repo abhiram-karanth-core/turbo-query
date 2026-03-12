@@ -15,6 +15,7 @@ Turbo Query is a high-performance distributed search system that combines BM25 k
 - **Fully containerized** with Docker Compose
 - **Per-shard latency instrumentation**
 - **Robust handling** of embedding and out-of-bounds edge cases
+- **300,000+ documents** indexed across 4 shards (~75k docs/shard)
 
 ---
 
@@ -57,7 +58,7 @@ Turbo Query includes an optional Redis-based query cache at the coordinator laye
 | Language | Go |
 | HTTP Router | chi |
 | Inverted Index/BM25 | Bleve |
-| Embeddings | all-MiniLM via Ollama |
+| Embeddings | all-MiniLM-L6-v2 via Ollama |
 | Query Cache | Redis |
 | Containerization | Docker & Docker Compose |
 | Vector Storage | mmap-backed binary file |
@@ -101,7 +102,7 @@ The offline indexer performs:
 Each shard performs:
 
 1. BM25 candidate retrieval
-2. Dense vector similarity (cosine via dot product)
+2. Dense vector similarity (cosine via dot product on BM25 top-K candidates only)
 3. Score normalization
 4. Hybrid fusion:
 
@@ -109,23 +110,40 @@ Each shard performs:
 final_score = 0.7 * BM25_norm + 0.3 * cosine_norm
 ```
 
+> Cosine reranking runs only over BM25 top-K candidates, not the full vector store — keeping rerank cost constant regardless of shard size.
+
 ---
 
 ## Query Performance Metrics
 
-Measurements taken on a local multi-shard deployment with parallel coordinator fan-out.
+Measurements taken on a local multi-shard deployment with parallel coordinator fan-out, 300k documents across 4 shards.
 
 | Scenario | Latency |
 |--------|--------|
 | Redis cache hit | **~250–800 µs** |
-| Warm query (page cache populated) | **~25–40 ms total** |
-| Cold query (first request after startup) | **~200–500 ms** |
+| Warm query (steady state) | **~34–58 ms** |
+ Early queries (2–10, cache warming) | **~70–150 ms** |
+| First query after startup | **~200 ms** |
+
+> Benchmarked on a single host where the embedding service and shard servers share resources. In a production deployment, these would run on separate nodes, reducing fanout latency further.
+
+### Why warm latency is query-length independent
+
+Once the embedding model is loaded and vector pages are in the OS page cache, query latency is dominated by BM25 retrieval and mmap vector reads — both constant regardless of query length. The actual bottleneck is the OS page cache serving vectors via mmap, not embedding.
 
 ### Why cold queries are slower
 
-When a query is executed for the first time after startup, the memory-mapped vector files may not yet be present in the Linux page cache. Accessing these vectors triggers page faults as the OS loads the corresponding pages from disk.
-Once accessed, the pages remain in the OS page cache, allowing subsequent queries to perform zero-copy reads directly from memory.
-If Redis caching is enabled, repeated identical queries are served entirely from the cache, bypassing the search pipeline and eliminating both disk and page-cache access. For queries that are similar but not identical — such as "microsoft" followed by "microsoft stocks" — Redis provides no cache benefit, but the relevant vector pages are likely already warm in the OS page cache, since semantically related documents tend to occupy nearby offsets in the mmap file.
+When a query is executed for the first time after startup, the memory-mapped vector files may not yet be present in the Linux page cache. Accessing these vectors triggers page faults as the OS loads the corresponding pages from disk. Once accessed, the pages remain in the OS page cache, allowing subsequent queries to perform zero-copy reads directly from memory.
+
+For queries that are similar but not identical — such as "microsoft" followed by "microsoft stocks" — Redis provides no cache benefit, but the relevant vector pages are likely already warm in the OS page cache, since semantically related documents tend to occupy nearby offsets in the mmap file.
+
+### Latency Breakdown (warm, single host)
+
+| Component | Time |
+|---|---|
+| Embedding (model warm) | ~20–30 ms |
+| BM25 + fanout + rerank | ~10–25 ms |
+| **Total** | **~34–58 ms** |
 
 ### Query Execution Breakdown
 
@@ -147,14 +165,13 @@ Turbo Query uses two complementary caching layers:
 
 Redis provides the lowest latency for identical queries, while the OS page cache accelerates vector access for semantically related queries that access similar regions of the vector store.
 
-This layered caching approach mirrors production search architectures where query-result caches coexist with mmap-backed indexes that rely on the operating system's page cache for efficient data access.
-
 ### Notes
 
 - Shard queries are executed **in parallel**, so total latency approximates the **slowest shard**.
-- `mmap` allows efficient vector access without deserializing vectors into heap memory.
-- Warm queries benefit from the **Linux page cache**, eliminating disk access.
+- `mmap` allows zero-copy vector access directly from OS page cache — vectors are never deserialized into heap memory.
+- Warm queries benefit from the **Linux page cache**, eliminating disk access entirely.
 - Cached queries bypass the entire search pipeline via **Redis**, achieving sub-millisecond response times.
+- Shard document distribution varies based on FNV hash of document IDs — minor imbalance (~10–15%) is expected and does not affect correctness.
 
 ---
 
