@@ -127,6 +127,29 @@ Measurements taken on a local multi-shard deployment with parallel coordinator f
 
 > Benchmarked on a single host where the embedding service and shard servers share resources. In a production deployment, these would run on separate nodes, reducing fanout latency further.
 
+### Throughput Benchmark (wrk)
+
+Benchmarked using [`wrk`](https://github.com/wg1929/wrk) with a Lua script 
+cycling through 100 diverse queries (history, science, geopolitics) sent as 
+random POST requests to the coordinator.
+```bash
+wrk -t8 -c50 -d30s -s search.lua http://localhost:8080/search
+```
+
+| Scenario | Throughput | Transfer |
+|---|---|---|
+| Redis enabled (cold start) | **16,708 req/sec** | 226 MB/s |
+| Redis disabled | ~1,000 req/sec | ~14 MB/s |
+
+> Tested on a single Windows host running Docker Desktop, with all services 
+> (coordinator, 4 shards, Redis, Ollama) co-located. Cold start means Redis 
+> was flushed before the run — the system warms up within the first few seconds 
+> as the 100 unique queries populate the cache.
+
+**16x throughput amplification** from Redis caching. Without Redis, throughput 
+is bound by Ollama embedding latency and parallel shard fanout (~1k req/sec). 
+With Redis, repeated queries bypass the search pipeline entirely.
+
 ### Why warm latency is query-length independent
 
 Once the embedding model is loaded and vector pages are in the OS page cache, query latency is dominated by BM25 retrieval and mmap vector reads — both constant regardless of query length. The actual bottleneck is the OS page cache serving vectors via mmap, not embedding.
