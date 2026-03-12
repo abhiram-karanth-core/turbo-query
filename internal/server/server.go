@@ -5,7 +5,8 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"time"	
+	"time"
+
 	"golang.org/x/sync/singleflight"
 
 	redisclient "turbo-query/internal/redis"
@@ -46,6 +47,12 @@ func NewServer() *http.Server {
 		port: port,
 		httpClient: &http.Client{
 			Timeout: 2 * time.Second,
+			Transport: &http.Transport{
+				MaxIdleConns:        600,
+				MaxIdleConnsPerHost: 150,
+				IdleConnTimeout:     90 * time.Second,
+				DisableKeepAlives:   false,
+			},
 		},
 		shards: []string{
 			"http://shard0:8080",
