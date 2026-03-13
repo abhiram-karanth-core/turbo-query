@@ -113,42 +113,66 @@ final_score = 0.7 * BM25_norm + 0.3 * cosine_norm
 > Cosine reranking runs only over BM25 top-K candidates, not the full vector store — keeping rerank cost constant regardless of shard size.
 
 ---
-
 ## Query Performance Metrics
 
 Measurements taken on a local multi-shard deployment with parallel coordinator fan-out, 300k documents across 4 shards.
 
+### Sequential Latency (single client, cache warming)
+
+> Measured under sequential single-client load (curl), showing per-query
+> latency as the cache warms up from cold start.
+
 | Scenario | Latency |
 |--------|--------|
 | Redis cache hit | **~250–800 µs** |
-| Warm query (steady state) | **~34–58 ms** |
- Early queries (2–10, cache warming) | **~70–150 ms** |
-| First query after startup | **~200 ms** |
+| Warm query (steady state) | **~27–37ms** |
+| Early queries (cache warming) | **~70–270ms** |
+| First query after startup | **~200ms** |
 
 > Benchmarked on a single host where the embedding service and shard servers share resources. In a production deployment, these would run on separate nodes, reducing fanout latency further.
 
 ### Throughput Benchmark (wrk)
 
-Benchmarked using [`wrk`](https://github.com/wg1929/wrk) with a Lua script 
-cycling through 100 diverse queries (history, science, geopolitics) sent as 
-random POST requests to the coordinator.
+> Measured under open-loop concurrent load — 8 threads, 50 connections, 100 diverse queries.
 ```bash
 wrk -t8 -c50 -d30s -s search.lua http://localhost:8080/search
 ```
 
 | Scenario | Throughput | Transfer |
 |---|---|---|
-| Redis enabled (cold start) | **16,708 req/sec** | 226 MB/s |
+| Redis enabled (cold start) | **21,042 req/sec** | 285 MB/s |
 | Redis disabled | ~1,000 req/sec | ~14 MB/s |
 
-> Tested on a single Windows host running Docker Desktop, with all services 
-> (coordinator, 4 shards, Redis, Ollama) co-located. Cold start means Redis 
-> was flushed before the run — the system warms up within the first few seconds 
-> as the 100 unique queries populate the cache.
+> Tested on a single Windows host running Docker Desktop, with all services
+> (coordinator, 4 shards, Redis, Ollama) co-located. Cold start means Redis
+> was flushed before the run — the system warms up within the first few seconds
+> as the 100 unique queries populate the cache. Docker log streaming was disabled
+> during benchmarking — enabling it significantly inflates latency and reduces throughput.
 
-**16x throughput amplification** from Redis caching. Without Redis, throughput 
-is bound by Ollama embedding latency and parallel shard fanout (~1k req/sec). 
+**21x throughput amplification** from Redis caching. Without Redis, throughput
+is bound by Ollama embedding latency and parallel shard fanout (~1k req/sec).
 With Redis, repeated queries bypass the search pipeline entirely.
+
+### Latency Under Sustained Load (wrk2, 10k req/sec constant rate)
+
+> Measured using [`wrk2`](https://github.com/giltene/wrk2) — a constant-rate load
+> generator that avoids coordinated omission, giving accurate latency percentiles
+> under sustained load.
+```bash
+./wrk -t8 -c50 -d30s -R 10000 --latency -s search.lua http://localhost:8080/search
+```
+
+| Percentile | Latency |
+|---|---|
+| p50 | 1.23ms |
+| p75 | 1.64ms |
+| p90 | 2.00ms |
+| p95 | 2.26ms |
+| p99 | 3.21ms |
+| p99.9 | 6.66ms |
+
+> All percentiles reflect Redis cache hits — at 10k req/sec sustained, the cache
+> is warm within the first few seconds and absorbs the load entirely.
 
 ### Why warm latency is query-length independent
 
@@ -159,14 +183,13 @@ Once the embedding model is loaded and vector pages are in the OS page cache, qu
 When a query is executed for the first time after startup, the memory-mapped vector files may not yet be present in the Linux page cache. Accessing these vectors triggers page faults as the OS loads the corresponding pages from disk. Once accessed, the pages remain in the OS page cache, allowing subsequent queries to perform zero-copy reads directly from memory.
 
 For queries that are similar but not identical — such as "microsoft" followed by "microsoft stocks" — Redis provides no cache benefit, but the relevant vector pages are likely already warm in the OS page cache, since semantically related documents tend to occupy nearby offsets in the mmap file.
-
 ### Latency Breakdown (warm, single host)
 
 | Component | Time |
 |---|---|
-| Embedding (model warm) | ~20–30 ms |
-| BM25 + fanout + rerank | ~10–25 ms |
-| **Total** | **~34–58 ms** |
+| Embedding (model warm) | ~20–30ms |
+| BM25 + fanout + rerank | ~7–10ms |
+| **Total** | **~27–37ms** |
 
 ### Query Execution Breakdown
 
