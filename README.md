@@ -113,6 +113,7 @@ final_score = 0.7 * BM25_norm + 0.3 * cosine_norm
 > Cosine reranking runs only over BM25 top-K candidates, not the full vector store — keeping rerank cost constant regardless of shard size.
 
 ---
+
 ## Query Performance Metrics
 
 Measurements taken on a local multi-shard deployment with parallel coordinator fan-out, 300k documents across 4 shards.
@@ -131,65 +132,55 @@ Measurements taken on a local multi-shard deployment with parallel coordinator f
 
 > Benchmarked on a single host where the embedding service and shard servers share resources. In a production deployment, these would run on separate nodes, reducing fanout latency further.
 
-### Throughput Benchmark (wrk)
-
-> Measured under open-loop concurrent load — 8 threads, 50 connections, 100 diverse queries.
-```bash
-wrk -t8 -c50 -d30s -s search.lua http://localhost:8080/search
-```
-
-| Scenario | Throughput | Transfer |
-|---|---|---|
-| Redis enabled (cold start) | **21,042 req/sec** | 285 MB/s |
-| Redis disabled | ~1,000 req/sec | ~14 MB/s |
-
-> Tested on a single Windows host running Docker Desktop, with all services
-> (coordinator, 4 shards, Redis, Ollama) co-located. Cold start means Redis
-> was flushed before the run — the system warms up within the first few seconds
-> as the 100 unique queries populate the cache. Docker log streaming was disabled
-> during benchmarking — enabling it significantly inflates latency and reduces throughput.
-
-**21x throughput amplification** from Redis caching. Without Redis, throughput
-is bound by Ollama embedding latency and parallel shard fanout (~1k req/sec).
-With Redis, repeated queries bypass the search pipeline entirely.
-
 ### Latency Under Sustained Load (wrk2, 10k req/sec constant rate)
 
 > Measured using [`wrk2`](https://github.com/giltene/wrk2) — a constant-rate load
 > generator that avoids coordinated omission, giving accurate latency percentiles
-> under sustained load.
+> under sustained load. Queries drawn from a **Zipfian distribution** over 100
+> semantically diverse queries to simulate realistic search traffic patterns.
+
 ```bash
 ./wrk -t8 -c50 -d30s -R 10000 --latency -s search.lua http://localhost:8080/search
 ```
 
-| Percentile | Latency |
-|---|---|
-| p50 | 1.23ms |
-| p75 | 1.64ms |
-| p90 | 2.00ms |
-| p95 | 2.26ms |
-| p99 | 3.21ms |
-| p99.9 | 6.66ms |
+| Percentile | Cold (Redis flushed) | Warm (Redis populated) |
+|---|---|---|
+| p50 | 1.47ms | 1.35ms |
+| p75 | 2.06ms | 1.81ms |
+| p90 | 27ms | 2.27ms |
+| p95 | ~80ms | ~2.65ms |
+| p99 | 704ms | 4.01ms |
+| p99.9 | 780ms | 7.56ms |
 
-> All percentiles reflect Redis cache hits — at 10k req/sec sustained, the cache
-> is warm within the first few seconds and absorbs the load entirely.
+> **Cold** = Redis flushed before run; mmap vector pages not yet resident in OS page cache.
+> **Warm** = immediate re-run with Redis populated and vector pages hot in page cache.
 
-### Why warm latency is query-length independent
+#### Observations
 
-Once the embedding model is loaded and vector pages are in the OS page cache, query latency is dominated by BM25 retrieval and mmap vector reads — both constant regardless of query length. The actual bottleneck is the OS page cache serving vectors via mmap, not embedding.
+- **Redis reduces p90 from 27ms → 2.3ms and p99 from 704ms → 4ms** at 10k sustained req/sec under Zipfian load — the dominant performance lever once the cache is warm.
+- **Cold p90 of 27ms** reflects Ollama embedding latency (~20–30ms) on cache misses before Redis warms up. Once the top Zipfian queries are cached (within the first few seconds), the embedding path is bypassed entirely.
+- **Warm p99 of 4ms** represents the tail of cache misses hitting the full BM25 + rerank pipeline with mmap vector pages already resident in the OS page cache.
+- The two caching layers are complementary: **Redis** eliminates repeated pipeline execution; **Linux page cache** eliminates disk I/O for vector reads on cache misses.
 
 ### Why cold queries are slower
 
-When a query is executed for the first time after startup, the memory-mapped vector files may not yet be present in the Linux page cache. Accessing these vectors triggers page faults as the OS loads the corresponding pages from disk. Once accessed, the pages remain in the OS page cache, allowing subsequent queries to perform zero-copy reads directly from memory.
+When a query is executed for the first time after startup, two things happen simultaneously:
+
+1. Redis has no cached results — every query hits the full search pipeline including Ollama embedding (~20–30ms).
+2. The memory-mapped vector files may not yet be present in the Linux page cache, triggering page faults as the OS loads vector pages from disk.
+
+Once the top Zipfian queries populate Redis and vector pages warm up in the OS page cache, both costs disappear — subsequent queries either hit Redis directly (~1–2ms) or execute BM25 + rerank with zero-copy mmap reads ~3–5ms.
 
 For queries that are similar but not identical — such as "microsoft" followed by "microsoft stocks" — Redis provides no cache benefit, but the relevant vector pages are likely already warm in the OS page cache, since semantically related documents tend to occupy nearby offsets in the mmap file.
+
 ### Latency Breakdown (warm, single host)
 
 | Component | Time |
 |---|---|
-| Embedding (model warm) | ~20–30ms |
-| BM25 + fanout + rerank | ~7–10ms |
-| **Total** | **~27–37ms** |
+| Redis cache hit | ~1–2ms |
+| Embedding (model warm, cache miss) | ~20–30ms |
+| BM25 + fanout + rerank (cache miss) | ~7–10ms |
+| **Cache miss total** | **~27–37ms** |
 
 ### Query Execution Breakdown
 
@@ -206,17 +197,17 @@ For queries that are similar but not identical — such as "microsoft" followed 
 
 Turbo Query uses two complementary caching layers:
 
-- **Redis query cache** — stores full query results to accelerate repeated queries.
-- **Linux page cache** — automatically caches memory-mapped vector pages after first access.
+- **Redis query cache** — stores full query results to accelerate exact repeated queries. Primary performance lever under Zipfian load — reduces p90 by ~12x once warm.
+- **Linux page cache** — automatically caches memory-mapped vector pages after first access, eliminating disk I/O for vector reads on cache misses.
 
-Redis provides the lowest latency for identical queries, while the OS page cache accelerates vector access for semantically related queries that access similar regions of the vector store.
+Under Zipfian query distributions (realistic search traffic), Redis absorbs the majority of load within seconds of startup. The remaining cache misses execute the full pipeline with mmap-backed vector reads that are zero-copy once pages are resident.
 
 ### Notes
 
 - Shard queries are executed **in parallel**, so total latency approximates the **slowest shard**.
 - `mmap` allows zero-copy vector access directly from OS page cache — vectors are never deserialized into heap memory.
 - Warm queries benefit from the **Linux page cache**, eliminating disk access entirely.
-- Cached queries bypass the entire search pipeline via **Redis**, achieving sub-millisecond response times.
+- Cached queries bypass the entire search pipeline via **Redis**, achieving sub-millisecond response times for exact repeated queries.
 - Shard document distribution varies based on FNV hash of document IDs — minor imbalance (~10–15%) is expected and does not affect correctness.
 
 ---
