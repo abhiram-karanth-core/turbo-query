@@ -1,17 +1,16 @@
 package shardnode
 
 import (
-	"encoding/binary"
 	"encoding/json"
 	"log"
-	"math"
 	"net/http"
 	"sort"
 	"strconv"
 	"time"
+	"unsafe"
+
 	"github.com/blevesearch/bleve/v2"
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 )
 
@@ -23,23 +22,11 @@ const (
 func (s *Server) getVector(docID uint32) []float32 {
 	start := int(docID) * vectorDim * 4
 	end := start + vectorDim*4
-
 	if start < 0 || end > len(s.mmapBuf) {
-		log.Printf(
-			"vector OOB: docID=%d start=%d end=%d mmap=%d",
-			docID, start, end, len(s.mmapBuf),
-		)
 		return nil
 	}
-
 	raw := s.mmapBuf[start:end]
-
-	vec := make([]float32, vectorDim)
-	for i := 0; i < vectorDim; i++ {
-		bits := binary.LittleEndian.Uint32(raw[i*4:])
-		vec[i] = math.Float32frombits(bits)
-	}
-	return vec
+	return unsafe.Slice((*float32)(unsafe.Pointer(&raw[0])), vectorDim)
 }
 func dot(a, b []float32) float64 {
 	var sum float64
@@ -139,8 +126,6 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) RegisterRoutes() http.Handler {
 	r := chi.NewRouter()
-
-	r.Use(middleware.Logger)
 
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"*"},
