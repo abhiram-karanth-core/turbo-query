@@ -38,4 +38,4 @@ internal/data/
 internal/shard/wiki_120k.json
 internal/shard/filtered.json
 
-.gitignore
+internal/embed/models
