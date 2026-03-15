@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"sort"
@@ -70,29 +71,27 @@ func (s *Server) SearchHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write(encoded)
 }
 func (s *Server) FanoutSearch(query string) ([]Result, error) {
-
 	var wg sync.WaitGroup
 	resultsChan := make(chan []Result, len(s.shards))
+
 	embedStart := time.Now()
-	qvec := embed.Embed(query)
+	qvec, err := embed.GetEmbedding(query)
 	log.Printf("embed latency=%v", time.Since(embedStart))
+	if err != nil || len(qvec) == 0 {
+		return nil, fmt.Errorf("embedding failed: %w", err)
+	}
+
 	for _, shard := range s.shards {
-
 		wg.Add(1)
-
 		go func(shardURL string) {
 			defer wg.Done()
-
 			res, err := s.queryShard(shardURL, query, qvec)
 			if err != nil {
 				log.Println("shard error:", shardURL, err)
 				return
 			}
-
 			log.Println("shard responded:", shardURL, "hits:", len(res))
-
 			resultsChan <- res
-
 		}(shard)
 	}
 
@@ -100,14 +99,12 @@ func (s *Server) FanoutSearch(query string) ([]Result, error) {
 	close(resultsChan)
 
 	var allResults []Result
-
 	for r := range resultsChan {
 		allResults = append(allResults, r...)
 	}
 
 	return mergeTopK(allResults, 10), nil
 }
-
 func (s *Server) queryShard(shardURL, query string, qvec []float32) ([]Result, error) {
 
 	body := map[string]interface{}{
@@ -121,11 +118,8 @@ func (s *Server) queryShard(shardURL, query string, qvec []float32) ([]Result, e
 		return nil, err
 	}
 
-	req, err := http.NewRequest(
-		"POST",
-		shardURL+"/search",
-		bytes.NewBuffer(buf),
-	)
+	req, err := http.NewRequest("POST", shardURL+"/search", bytes.NewBuffer(buf))
+
 	if err != nil {
 		return nil, err
 	}

@@ -138,7 +138,6 @@ func ingestWiki(path string, jobs chan<- IndexJob) error {
 
 	return scanner.Err()
 }
-
 func worker(jobs <-chan IndexJob, out chan<- PreparedDoc) {
 	for job := range jobs {
 		const maxEmbedChars = 800
@@ -146,24 +145,21 @@ func worker(jobs <-chan IndexJob, out chan<- PreparedDoc) {
 		if len(text) > maxEmbedChars {
 			text = text[:maxEmbedChars]
 		}
-		vec := embed.Embed(text)
-		//fallback
-		if len(vec) == 0 && len(text) > 200 {
+		vec, err := embed.GetEmbedding(text)
+		// fallback
+		if (err != nil || len(vec) == 0) && len(text) > 200 {
 			text = text[:200]
-			vec = embed.Embed(text)
+			vec, err = embed.GetEmbedding(text)
 		}
-
-		if len(vec) == 0 {
+		if err != nil || len(vec) == 0 {
 			continue
 		}
-
 		out <- PreparedDoc{
 			GlobalID: job.ID,
 			Title:    job.Title,
 			Text:     job.Text,
 			Vector:   vec,
 		}
-		// fmt.Println("embedded", job.ID)
 	}
 }
 
@@ -209,9 +205,9 @@ func shardWriter(s *Shard, ch <-chan PreparedDoc) {
 			s.Batch = s.Index.NewBatch()
 		}
 
-		if s.NextDocID % 600 == 0 {
-            fmt.Printf("shard-%d: %d docs\n", s.ID, s.NextDocID)
-        }
+		if s.NextDocID%600 == 0 {
+			fmt.Printf("shard-%d: %d docs\n", s.ID, s.NextDocID)
+		}
 	}
 	if s.Batch.Size() > 0 {
 		s.Index.Batch(s.Batch)

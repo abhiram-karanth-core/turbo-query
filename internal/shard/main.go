@@ -2,8 +2,10 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"path/filepath"
 	"sync"
+	"turbo-query/internal/embed"
 )
 
 var shardWg sync.WaitGroup
@@ -12,7 +14,9 @@ func main() {
 	numShards := 4
 	numWorkers := 4
 	vnodes := 128
-
+	if err := embed.Init(); err != nil {
+		log.Fatalf("failed to init embedding model: %v", err)
+	}
 	//hash ring
 	ring := NewHashRing(numShards, vnodes)
 
