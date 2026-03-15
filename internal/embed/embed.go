@@ -1,107 +1,53 @@
 package embed
 
 import (
-	"bytes"
-	"encoding/json"
-	"io"
-	"log"
 	"math"
-	"net/http"
-	"time"
+	"sync"
+
+	"github.com/knights-analytics/hugot"
+	"github.com/knights-analytics/hugot/options"
+	"github.com/knights-analytics/hugot/pipelines"
 )
 
 const Dim = 384
 
-var httpClient = &http.Client{
-	Timeout: 60 * time.Second,
+var (
+	pipeline *pipelines.FeatureExtractionPipeline
+	mu       sync.Mutex
+	initOnce sync.Once
+)
+func Init() error {
+    var err error
+    initOnce.Do(func() {
+        session, e := hugot.NewORTSession(
+            options.WithIntraOpNumThreads(8),
+            options.WithInterOpNumThreads(4),
+            options.WithExecutionMode(true),
+        )
+        if e != nil { err = e; return }
+        pipeline, err = hugot.NewPipeline(session, hugot.FeatureExtractionConfig{
+            ModelPath: "./models/all-MiniLM-L6-v2",
+            Name:      "all-MiniLM-L6-v2",
+        })
+    })
+    return err
 }
 
-// const ollamaURL = "http://ollama:11434/api/embeddings"
-// const ollamaURL = "http://127.0.0.1:11434/api/embeddings"
-const ollamaURL = "http://host.docker.internal:11434/api/embeddings"
-const modelName = "all-minilm"
-
-type embeddingRequest struct {
-	Model  string `json:"model"`
-	Prompt string `json:"prompt"`
+func GetEmbedding(query string) ([]float32, error) {
+    result, err := pipeline.RunPipeline([]string{query})
+    if err != nil { return nil, err }
+    return normalize(result.Embeddings[0]), nil
 }
 
-type embeddingResponse struct {
-	Embedding []float64 `json:"embedding"`
+func normalize(v []float32) []float32 {
+	var sum float32
+	for _, x := range v {
+		sum += x * x
+	}
+	norm := float32(1.0 / math.Sqrt(float64(sum)))
+	out := make([]float32, len(v))
+	for i, x := range v {
+		out[i] = x * norm
+	}
+	return out
 }
-
-func normalize(vec []float32) {
-	var sum float64
-	for _, v := range vec {
-		sum += float64(v * v)
-	}
-
-	norm := float32(math.Sqrt(sum))
-	if norm == 0 {
-		return
-	}
-
-	inv := 1.0 / norm
-	for i := range vec {
-		vec[i] *= inv
-	}
-}
-func Embed(text string) []float32 {
-	reqBody := embeddingRequest{
-		Model:  modelName,
-		Prompt: text,
-	}
-
-	jsonData, err := json.Marshal(reqBody)
-	if err != nil {
-		panic(err)
-	}
-
-	req, err := http.NewRequest("POST", ollamaURL, bytes.NewBuffer(jsonData))
-	if err != nil {
-		panic(err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		log.Println("embed http error:", err)
-		return nil
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		log.Println("ollama non-200:", resp.StatusCode, string(body))
-		return nil
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		log.Println("read body error:", err)
-		return nil
-	}
-
-	var result embeddingResponse
-	if err := json.Unmarshal(body, &result); err != nil {
-		log.Println("unmarshal error:", err)
-		return nil
-	}
-
-	if len(result.Embedding) == 0 {
-		log.Println("empty embedding returned")
-		return nil
-	}
-
-	vec := make([]float32, len(result.Embedding))
-	for i, v := range result.Embedding {
-		vec[i] = float32(v)
-	}
-	// log.Println("embedding length:", len(vec))
-	normalize(vec)
-	return vec
-}
-
-//pre normalizing the vectors so that Cosine becomes dot product only.
-//global normalization
-//more consistent ranking
