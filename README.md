@@ -6,15 +6,12 @@ Turbo Query is a high-performance distributed search system that combines BM25 k
 
 ## Features
 
-- **Hybrid search:** BM25 + semantic reranking
-- **MiniLM embeddings** via Ollama
+- **Hybrid search:** BM25 + semantic reranking via MiniLM embeddings
 - **Memory-mapped vector store** for zero-copy reads
-- **Redis query-result caching** to reduce repeated search latency
-- **Consistent hash–based sharding**
-- **Per-shard HTTP servers** (Go + chi)
+- **Redis query-result caching** — primary performance lever under realistic load
+- **Consistent hash–based sharding** across 4 shard nodes
+- **Parallel fan-out** coordinator with per-shard HTTP servers (Go + chi)
 - **Fully containerized** with Docker Compose
-- **Per-shard latency instrumentation**
-- **Robust handling** of embedding and out-of-bounds edge cases
 - **300,000+ documents** indexed across 4 shards (~75k docs/shard)
 
 ---
@@ -26,9 +23,9 @@ User Query
     ↓
 Redis Query Cache
     ↓ (cache miss)
-Coordinator (fan-out)
+Coordinator (parallel fan-out)
     ↓
-Shard Servers (parallel)
+Shard 0  Shard 1  Shard 2  Shard 3
     ↓
 BM25 retrieve → Vector rerank → Hybrid score
     ↓
@@ -36,18 +33,16 @@ Top-K merge → Cache result in Redis → Response
 ```
 
 Each shard maintains:
+- A **Bleve** inverted index for BM25 keyword retrieval
+- A **memory-mapped dense vector store** (`vectors.bin`) for zero-copy vector reads
+- **Shard-local sequential document IDs** used as direct offsets into the vector file
 
-- A **Bleve** inverted index for keyword retrieval
-- A **memory-mapped dense vector store** (`vectors.bin`)
-- **Shard-local sequential document IDs** used for both Bleve and vector offsets
-- An HTTP search endpoint
+### Caching
 
-### Query Cache Layer
+Redis caches full query results at the coordinator. Cache hits bypass the entire search pipeline — no embedding, no fan-out, no rerank.
 
-Turbo Query includes an optional Redis-based query cache at the coordinator layer. Repeated queries can be served directly from Redis without executing shard fan-out.
-
-- **Cache hits** bypass the search pipeline entirely, reducing latency to sub-millisecond levels.
-- **Cache misses** fall back to the full distributed search pipeline.
+- **Cache hit:** ~1–2ms regardless of query complexity
+- **Cache miss:** full pipeline — embedding → fan-out → BM25 → rerank → merge
 
 ---
 
@@ -57,10 +52,10 @@ Turbo Query includes an optional Redis-based query cache at the coordinator laye
 |---|---|
 | Language | Go |
 | HTTP Router | chi |
-| Inverted Index/BM25 | Bleve |
+| Inverted Index / BM25 | Bleve |
 | Embeddings | all-MiniLM-L6-v2 via Ollama |
 | Query Cache | Redis |
-| Containerization | Docker & Docker Compose |
+| Containerization | Docker Compose |
 | Vector Storage | mmap-backed binary file |
 
 ---
@@ -69,12 +64,12 @@ Turbo Query includes an optional Redis-based query cache at the coordinator laye
 
 ```
 cmd/
-  api/            # coordinator server (fan-out layer)
+  api/            # coordinator server (fan-out + cache layer)
   shard/          # per-shard search server
 
 internal/
-  embed/          # embedding client + normalization
-  shardnode/      # shard HTTP handlers and hybrid search
+  embed/          # embedding client + L2 normalization
+  shardnode/      # shard HTTP handlers and hybrid search logic
   data/           # shard indexes and vector files
 
 indexer/          # offline indexing pipeline
@@ -84,171 +79,129 @@ indexer/          # offline indexing pipeline
 
 ## Indexing Pipeline
 
-The offline indexer performs:
-
 1. Wiki JSON ingestion
 2. MiniLM embedding generation
-3. Vector normalization and mmap write
+3. L2 vector normalization and mmap write
 4. Consistent hash routing to shards
 5. Bleve batch indexing
 6. Sequential shard-local ID assignment for direct vector lookup
 
-> Document and query vectors are L2-normalized so cosine similarity can be computed efficiently via dot product.
+> Vectors are L2-normalized at index time so cosine similarity reduces to a dot product at query time.
 
 ---
 
-## Scoring Strategy
+## Scoring
 
 Each shard performs:
 
-1. BM25 candidate retrieval
-2. Dense vector similarity (cosine via dot product on BM25 top-K candidates only)
+1. BM25 candidate retrieval (top 100)
+2. Cosine similarity via dot product against mmap-backed vectors
 3. Score normalization
 4. Hybrid fusion:
 
 ```
-final_score = 0.7 * BM25_norm + 0.3 * cosine_norm
+final_score = 0.7 × BM25_norm + 0.3 × cosine_norm
 ```
 
-> Cosine reranking runs only over BM25 top-K candidates, not the full vector store — keeping rerank cost constant regardless of shard size.
+> Reranking runs only over BM25 top-100 candidates — cost is constant regardless of shard size.
 
 ---
 
-## Query Performance Metrics
+## Performance
 
-Measurements taken on a local multi-shard deployment with parallel coordinator fan-out, 300k documents across 4 shards.
+Benchmarked on a single host (WSL2, 4-core, 10GB RAM) using [wrk2](https://github.com/giltene/wrk2) — a constant-rate load generator that corrects for coordinated omission.
 
-### Sequential Latency (single client, cache warming)
+### Summary
 
-> Measured under sequential single-client load (curl), showing per-query
-> latency as the cache warms up from cold start.
+| Mode | RPS | Cache Hit Rate | p50 | p99 | Bottleneck |
+|---|---|---|---|---|---|
+| Redis warm (Zipfian load) | 10,000 | ~99% | 1.3ms | 3ms | None |
+| Realistic mixed load | 100 | ~56% | 15ms | 228ms | Ollama embeddings |
+| No cache | ~50 | 0% | 35ms | 1.3s | Ollama embeddings |
 
-| Scenario | Latency |
-|--------|--------|
-| Redis cache hit | **~250–800 µs** |
-| Warm query (steady state) | **~27–37ms** |
-| Early queries (cache warming) | **~70–270ms** |
-| First query after startup | **~200ms** |
+### Redis Warm — 10k RPS
 
-> Benchmarked on a single host where the embedding service and shard servers share resources. In a production deployment, these would run on separate nodes, reducing fanout latency further.
-
-### Latency Under Sustained Load (wrk2, 10k req/sec constant rate)
-
-> Measured using [`wrk2`](https://github.com/giltene/wrk2) — a constant-rate load
-> generator that avoids coordinated omission, giving accurate latency percentiles
-> under sustained load. Queries drawn from a **Zipfian distribution** over 100
-> semantically diverse queries to simulate realistic search traffic patterns.
+Under Zipfian query distribution (realistic search traffic), the top queries populate Redis within seconds. Once warm, the cache absorbs ~99% of requests.
 
 ```bash
 ./wrk -t8 -c50 -d30s -R 10000 --latency -s search.lua http://localhost:8080/search
 ```
 
-| Percentile | Cold (Redis flushed) | Warm (Redis populated) |
+| Percentile | Cold (page cache dropped) | Warm |
 |---|---|---|
-| p50 | 1.47ms | 1.35ms |
-| p75 | 2.06ms | 1.81ms |
-| p90 | 27ms | 2.27ms |
-| p95 | ~80ms | ~2.65ms |
-| p99 | 704ms | 4.01ms |
-| p99.9 | 780ms | 7.56ms |
+| p50 | 1.30ms | 1.30ms |
+| p75 | 1.72ms | 1.72ms |
+| p90 | 2.11ms | 2.09ms |
+| p95 | 2.34ms | 2.31ms |
+| p99 | 3.01ms | 2.86ms |
+| p99.9 | 23.84ms | 4.43ms |
+| max | 51.58ms | 11.18ms |
 
-> **Cold** = Redis flushed before run; mmap vector pages not yet resident in OS page cache.
-> **Warm** = immediate re-run with Redis populated and vector pages hot in page cache.
+> Cold p99.9 of 24ms reflects first-access mmap page faults on the vector store — a one-time startup cost that disappears as pages warm in the OS page cache.
 
-#### Observations
+### Realistic Mixed Load — 100 RPS
 
-- **Redis reduces p90 from 27ms → 2.3ms and p99 from 704ms → 4ms** at 10k sustained req/sec under Zipfian load — the dominant performance lever once the cache is warm.
-- **Cold p90 of 27ms** reflects Ollama embedding latency (~20–30ms) on cache misses before Redis warms up. Once the top Zipfian queries are cached (within the first few seconds), the embedding path is bypassed entirely.
-- **Warm p99 of 4ms** represents the tail of cache misses hitting the full BM25 + rerank pipeline with mmap vector pages already resident in the OS page cache.
-- The two caching layers are complementary: **Redis** eliminates repeated pipeline execution; **Linux page cache** eliminates disk I/O for vector reads on cache misses.
+With a diverse query pool (~1,000 unique combinations), Redis hit rate drops to ~56%. The remaining 44% of requests execute the full pipeline including Ollama embedding generation.
 
-### Why cold queries are slower
+```bash
+./wrk -t8 -c50 -d30s -R 100 --latency -s search.lua http://localhost:8080/search
+```
 
-When a query is executed for the first time after startup, two things happen simultaneously:
+| Percentile | Latency |
+|---|---|
+| p50 | 15ms |
+| p90 | 34ms |
+| p95 | 40ms |
+| p99 | 228ms |
+| max | 353ms |
 
-1. Redis has no cached results — every query hits the full search pipeline including Ollama embedding (~20–30ms).
-2. The memory-mapped vector files may not yet be present in the Linux page cache, triggering page faults as the OS loads vector pages from disk.
+The p50 of 15ms reflects the blend of ~1ms Redis hits and ~35ms Ollama misses. The system is stable at 100 RPS — the hard ceiling is single-instance Ollama at ~50 embeddings/sec.
 
-Once the top Zipfian queries populate Redis and vector pages warm up in the OS page cache, both costs disappear — subsequent queries either hit Redis directly (~1–2ms) or execute BM25 + rerank with zero-copy mmap reads ~3–5ms.
+### Latency Breakdown (cache miss)
 
-For queries that are similar but not identical — such as "microsoft" followed by "microsoft stocks" — Redis provides no cache benefit, but the relevant vector pages are likely already warm in the OS page cache, since semantically related documents tend to occupy nearby offsets in the mmap file.
-
-### Latency Breakdown (warm, single host)
-
-| Component | Time |
+| Component | Latency |
 |---|---|
 | Redis cache hit | ~1–2ms |
-| Embedding (model warm, cache miss) | ~20–30ms |
-| BM25 + fanout + rerank (cache miss) | ~7–10ms |
-| **Cache miss total** | **~27–37ms** |
+| Ollama embedding (MiniLM, model warm) | ~30–35ms |
+| BM25 + parallel fan-out + rerank | ~3–5ms |
+| **Cache miss total** | **~35–40ms** |
 
-### Query Execution Breakdown
+### Scaling Beyond Single-Host
 
-1. Redis cache lookup
-2. Query embedding generation (MiniLM via Ollama) *(cache miss only)*
-3. Coordinator parallel fan-out to shards
-4. BM25 candidate retrieval
-5. Dense vector similarity scoring using mmap-backed vectors
-6. Hybrid score fusion
-7. Top-K merge
-8. Cache result in Redis
+The search pipeline itself — BM25, mmap vector reads, fan-out, rerank — sustains sub-5ms p99 at high concurrency. The embedding layer is the only throughput bottleneck. In a production deployment:
 
-### Caching Behavior
-
-Turbo Query uses two complementary caching layers:
-
-- **Redis query cache** — stores full query results to accelerate exact repeated queries. Primary performance lever under Zipfian load — reduces p90 by ~12x once warm.
-- **Linux page cache** — automatically caches memory-mapped vector pages after first access, eliminating disk I/O for vector reads on cache misses.
-
-Under Zipfian query distributions (realistic search traffic), Redis absorbs the majority of load within seconds of startup. The remaining cache misses execute the full pipeline with mmap-backed vector reads that are zero-copy once pages are resident.
-
-### Notes
-
-- Shard queries are executed **in parallel**, so total latency approximates the **slowest shard**.
-- `mmap` allows zero-copy vector access directly from OS page cache — vectors are never deserialized into heap memory.
-- Warm queries benefit from the **Linux page cache**, eliminating disk access entirely.
-- Cached queries bypass the entire search pipeline via **Redis**, achieving sub-millisecond response times for exact repeated queries.
-- Shard document distribution varies based on FNV hash of document IDs — minor imbalance (~10–15%) is expected and does not affect correctness.
+- Multiple Ollama instances behind a load balancer increase embedding throughput linearly
+- Shards are stateless and scale horizontally
+- Zipfian query distributions mean Redis absorbs the majority of load, keeping embedding cost amortized
 
 ---
 
 ## Querying the API
 
-Once the coordinator and shard servers are running, queries can be sent to the coordinator endpoint.
-
-### Example Request
-```bash
-curl -X POST http://localhost:8080/search \
-  -H "Content-Type: application/json" \
-  -d '{"query":"microsoft","top_k":5}'
-```
-
-### Pretty Printed Output
 ```bash
 curl -s -X POST http://localhost:8080/search \
   -H "Content-Type: application/json" \
-  -d '{"query":"cricket","top_k":5}' \
+  -d '{"query":"byzantine empire fall","top_k":5}' \
   | python -m json.tool
 ```
 
 ### Example Response
+
 ```json
 [
   {
-    "doc_id": "26277",
-    "score": 0.9259,
-    "shard_id": "3",
-    "title": "Microsoft Flight Simulator",
-    "text": "Microsoft Flight Simulator is a series of flight simulation video games..."
+    "doc_id": "14823",
+    "score": 0.9341,
+    "shard_id": "2",
+    "title": "Fall of Constantinople",
+    "text": "The fall of Constantinople in 1453 marked the end of the Byzantine Empire..."
   },
   {
-    "doc_id": "20140",
-    "score": 0.9179,
+    "doc_id": "9217",
+    "score": 0.8976,
     "shard_id": "0",
-    "title": "Microsoft FrontPage",
-    "text": "Microsoft FrontPage is a discontinued WYSIWYG HTML editor..."
+    "title": "Byzantine Empire",
+    "text": "The Byzantine Empire, also known as the Eastern Roman Empire..."
   }
 ]
 ```
-
----
