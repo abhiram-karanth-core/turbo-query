@@ -53,7 +53,7 @@ Redis caches full query results at the coordinator. Cache hits bypass the entire
 | Language | Go |
 | HTTP Router | chi |
 | Inverted Index / BM25 | Bleve |
-| Embeddings | all-MiniLM-L6-v2 via Ollama |
+| Embeddings | all-MiniLM-L6-v2 via ONNX Runtime (hugot) |
 | Query Cache | Redis |
 | Containerization | Docker Compose |
 | Vector Storage | mmap-backed binary file |
@@ -68,7 +68,7 @@ cmd/
   shard/          # per-shard search server
 
 internal/
-  embed/          # embedding client + L2 normalization
+  embed/          # ONNX Runtime embedding client + L2 normalization
   shardnode/      # shard HTTP handlers and hybrid search logic
   data/           # shard indexes and vector files
 
@@ -109,15 +109,14 @@ final_score = 0.7 × BM25_norm + 0.3 × cosine_norm
 
 ## Performance
 
-Benchmarked on a single host (WSL2, 4-core, 10GB RAM) using [wrk2](https://github.com/giltene/wrk2) — a constant-rate load generator that corrects for coordinated omission.
+Benchmarked on a laptop (WSL2, i7-13650HX, 12GB RAM) using [wrk2](https://github.com/giltene/wrk2) — a constant-rate load generator that corrects for coordinated omission.
 
 ### Summary
 
 | Mode | RPS | Cache Hit Rate | p50 | p99 | Bottleneck |
 |---|---|---|---|---|---|
-| Redis warm (Zipfian load) | 10,000 | ~99% | 1.3ms | 3ms | None |
-| Realistic mixed load | 100 | ~56% | 15ms | 228ms | Ollama embeddings |
-| No cache | ~50 | 0% | 35ms | 1.3s | Ollama embeddings |
+| Redis warm (Zipfian load) | 10,000 | ~99% | 1.4ms | 3ms | None |
+| Full pipeline (no cache) | ~100 | 0% | 128ms | 956ms | ORT single-session mutex |
 
 ### Redis Warm — 10k RPS
 
@@ -127,52 +126,61 @@ Under Zipfian query distribution (realistic search traffic), the top queries pop
 ./wrk -t8 -c50 -d30s -R 10000 --latency -s search.lua http://localhost:8080/search
 ```
 
-| Percentile | Cold (page cache dropped) | Warm |
-|---|---|---|
-| p50 | 1.30ms | 1.30ms |
-| p75 | 1.72ms | 1.72ms |
-| p90 | 2.11ms | 2.09ms |
-| p95 | 2.34ms | 2.31ms |
-| p99 | 3.01ms | 2.86ms |
-| p99.9 | 23.84ms | 4.43ms |
-| max | 51.58ms | 11.18ms |
+| Percentile | Latency |
+|---|---|
+| p50 | 1.40ms |
+| p75 | 1.82ms |
+| p90 | 2.22ms |
+| p99 | 3.02ms |
+| p99.9 | 4.39ms |
+| max | 9.97ms |
 
-> Cold p99.9 of 24ms reflects first-access mmap page faults on the vector store — a one-time startup cost that disappears as pages warm in the OS page cache.
+### Full Pipeline — No Cache
 
-### Realistic Mixed Load — 100 RPS
-
-With a diverse query pool (~1,000 unique combinations), Redis hit rate drops to ~56%. The remaining 44% of requests execute the full pipeline including Ollama embedding generation.
+With salt appended to every query, every request executes the full pipeline: embed → fan-out → BM25 → rerank → merge. No Redis hits.
 
 ```bash
-./wrk -t8 -c50 -d30s -R 100 --latency -s search.lua http://localhost:8080/search
+docker exec turbo-query-redis-1 redis-cli FLUSHALL
+./wrk -t8 -c50 -d30s -R 200 --latency -s search.lua http://localhost:8080/search
 ```
 
 | Percentile | Latency |
 |---|---|
-| p50 | 15ms |
-| p90 | 34ms |
-| p95 | 40ms |
-| p99 | 228ms |
-| max | 353ms |
+| p50 | 128ms |
+| p90 | 184ms |
+| p99 | 956ms |
+| max | 1.1s |
 
-The p50 of 15ms reflects the blend of ~1ms Redis hits and ~35ms Ollama misses. The system is stable at 100 RPS — the hard ceiling is single-instance Ollama at ~50 embeddings/sec.
+The p50 of 128ms under 50 concurrent connections reflects mutex queuing at the embed layer — with 50 goroutines contending for one ORT session at ~3ms per embed, average wait is ~50 × 3ms = 150ms. Sequential single-request latency is 15–20ms.
 
-### Latency Breakdown (cache miss)
+### Latency Breakdown (single request, no contention)
 
 | Component | Latency |
 |---|---|
 | Redis cache hit | ~1–2ms |
-| Ollama embedding (MiniLM, model warm) | ~30–35ms |
-| BM25 + parallel fan-out + rerank | ~3–5ms |
-| **Cache miss total** | **~35–40ms** |
+| ONNX Runtime embedding (MiniLM) | ~2–4ms |
+| BM25 + parallel fan-out + rerank | ~7–30ms |
+| **Cache miss total (sequential)** | **~15–20ms** |
+| **Cache miss total (concurrent, mutex queuing)** | **~128ms p50** |
 
-### Scaling Beyond Single-Host
+### Embedding: ONNX Runtime vs Ollama
 
-The search pipeline itself — BM25, mmap vector reads, fan-out, rerank — sustains sub-5ms p99 at high concurrency. The embedding layer is the only throughput bottleneck. In a production deployment:
+Switching from Ollama to direct ONNX Runtime inference via hugot reduced per-query embedding latency from ~50–200ms to ~2–4ms — a 25–50x improvement. The hugot library runs MiniLM-L6-v2 directly through ORT without generative LLM overhead.
 
-- Multiple Ollama instances behind a load balancer increase embedding throughput linearly
-- Shards are stateless and scale horizontally
-- Zipfian query distributions mean Redis absorbs the majority of load, keeping embedding cost amortized
+| Backend | Embed latency | Full pipeline ceiling |
+|---|---|---|
+| Ollama | ~50–200ms | ~50 RPS |
+| ONNX Runtime (hugot) | ~2–4ms | ~100 RPS |
+
+---
+
+## Known Limitations
+
+The hugot ONNX Runtime backend enforces a single active session globally — attempting to create multiple sessions crashes with `another session is currently active`. All embedding calls serialize through a mutex, limiting full-pipeline throughput to ~100 RPS under concurrent load.
+
+The correct fix is migrating to [`yalue/onnxruntime_go`](https://github.com/yalue/onnxruntime_go) which supports multiple independent sessions. A pool of 8 sessions with 2 intra-op threads each would be expected to unlock 500–1000 RPS full pipeline on this hardware.
+
+The shard pipeline itself — BM25, mmap vector reads, parallel fan-out, hybrid rerank — is not the bottleneck. All 4 shards respond within ~7–30ms under load.
 
 ---
 
