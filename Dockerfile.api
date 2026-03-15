@@ -1,22 +1,44 @@
 # ---------- build stage ----------
-FROM golang:1.25-alpine AS builder
+FROM golang:1.25 AS builder
 
 WORKDIR /app
+
+RUN apt-get update && apt-get install -y wget gcc g++ && \
+    wget https://github.com/microsoft/onnxruntime/releases/download/v1.24.1/onnxruntime-linux-x64-1.24.1.tgz && \
+    tar -xzf onnxruntime-linux-x64-1.24.1.tgz && \
+    cp onnxruntime-linux-x64-1.24.1/lib/libonnxruntime.so* /usr/local/lib/ && \
+    cp -r onnxruntime-linux-x64-1.24.1/include/* /usr/local/include/ && \
+    ldconfig && \
+    rm -rf onnxruntime-linux-x64-1.24.1* && \
+    wget https://github.com/daulet/tokenizers/releases/download/v1.25.0/libtokenizers.linux-amd64.tar.gz && \
+    tar -xzf libtokenizers.linux-amd64.tar.gz && \
+    cp libtokenizers.a /usr/local/lib/ && \
+    rm -f libtokenizers.linux-amd64.tar.gz
 
 COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -o coordinator ./cmd/api
+RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
+    go build -tags ORT -o coordinator ./cmd/api
 
 # ---------- runtime stage ----------
-FROM alpine:3.20
+FROM ubuntu:24.04
 
 WORKDIR /app
 
+RUN apt-get update && apt-get install -y wget ca-certificates && \
+    wget https://github.com/microsoft/onnxruntime/releases/download/v1.24.1/onnxruntime-linux-x64-1.24.1.tgz && \
+    tar -xzf onnxruntime-linux-x64-1.24.1.tgz && \
+    cp onnxruntime-linux-x64-1.24.1/lib/libonnxruntime.so.1.24.1 /usr/lib/libonnxruntime.so && \
+    ldconfig && \
+    rm -rf onnxruntime-linux-x64-1.24.1* && \
+    apt-get remove -y wget && apt-get autoremove -y && \
+    rm -rf /var/lib/apt/lists/*
+
 COPY --from=builder /app/coordinator .
+COPY internal/embed/models/ ./models/
 
 EXPOSE 8080
 
