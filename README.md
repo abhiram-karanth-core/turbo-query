@@ -93,8 +93,8 @@ indexer/          # offline indexing pipeline
 2. MiniLM embedding generation
 3. L2 vector normalization and mmap write
 4. Consistent hash routing to shards
-5. Bleve batch indexing
-6. Sequential shard-local ID assignment for direct vector lookup
+5. Sequential shard-local ID assignment
+6. Bleve batch indexing with shard-local ID as document ID
 
 > Vectors are L2-normalized at index time so cosine similarity reduces to a dot product at query time.
 
@@ -155,6 +155,7 @@ connections (same 80 RPS), P90 doubles to 212ms as goroutines queue behind the O
 | **Full pipeline (cache miss, sequential)** | **~15–45ms** |
 
 ---
+
 ## Known Limitations
 
 The hugot ONNX Runtime backend enforces a single active session globally, serializing all concurrent embedding calls internally. This limits full-pipeline throughput under high concurrency.
@@ -164,6 +165,7 @@ A session pool was attempted using `yalue/onnxruntime_go` which supports multipl
 The shard pipeline — BM25, mmap vector reads, parallel fan-out, hybrid rerank — is not the bottleneck. All 4 shards respond within ~5–10ms under load.
 
 The Linux page cache warms at the BM25 retrieval level, not the semantic level. Lexically similar queries like "microsoft" → "microsoft stocks" return overlapping docIDs from BM25, so their vector pages are already warm in the page cache — effectively free RAM reads. Semantically similar but lexically different queries like "microsoft" → "bill gates company" return entirely different docIDs from BM25, causing cold page faults despite being conceptually identical. Page cache locality follows lexical similarity, not semantic similarity — an inherent tradeoff of BM25-first hybrid retrieval.
+
 ---
 
 ## Querying the API
