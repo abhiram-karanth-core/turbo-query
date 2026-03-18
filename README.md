@@ -140,7 +140,7 @@ wrk2 -t4 -c20 -d60s -R 80 --latency -s search.lua http://localhost:8080/search
 | P99.9 | 198ms |
 | Max | 211ms |
 
-**80 RPS, 20 concurrent connections, 60s duration, 4800 requests, 0 cache hits.**
+**80 RPS, 20 concurrent connections, 60s duration, 4800 requests, 0 cache hits (deliberately — pure raw performance).**
 
 Latency scales with concurrency due to the hugot single-session constraint — at 50 concurrent 
 connections (same 80 RPS), P90 doubles to 212ms as goroutines queue behind the ONNX inference call.
@@ -155,7 +155,6 @@ connections (same 80 RPS), P90 doubles to 212ms as goroutines queue behind the O
 | **Full pipeline (cache miss, sequential)** | **~15–45ms** |
 
 ---
-
 ## Known Limitations
 
 The hugot ONNX Runtime backend enforces a single active session globally, serializing all concurrent embedding calls internally. This limits full-pipeline throughput under high concurrency.
@@ -164,6 +163,7 @@ A session pool was attempted using `yalue/onnxruntime_go` which supports multipl
 
 The shard pipeline — BM25, mmap vector reads, parallel fan-out, hybrid rerank — is not the bottleneck. All 4 shards respond within ~5–10ms under load.
 
+The Linux page cache warms at the BM25 retrieval level, not the semantic level. Lexically similar queries like "microsoft" → "microsoft stocks" return overlapping docIDs from BM25, so their vector pages are already warm in the page cache — effectively free RAM reads. Semantically similar but lexically different queries like "microsoft" → "bill gates company" return entirely different docIDs from BM25, causing cold page faults despite being conceptually identical. Page cache locality follows lexical similarity, not semantic similarity — an inherent tradeoff of BM25-first hybrid retrieval.
 ---
 
 ## Querying the API
