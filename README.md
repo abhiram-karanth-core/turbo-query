@@ -1,6 +1,6 @@
 # Turbo Query — Distributed Hybrid Search Engine
 
-Turbo Query is a distributed search system combining BM25 keyword retrieval with semantic vector search using MiniLM embeddings, built to demonstrate production-style search infrastructure.
+Turbo Query is a distributed hybrid search engine combining BM25 keyword retrieval with semantic vector reranking using MiniLM embeddings — sharded across 4 nodes, memory-mapped vector storage for zero-copy reads, layered caching with Redis and the Linux page cache, and sub-100ms full-pipeline latency.
 
 ---
 
@@ -48,6 +48,9 @@ Turbo Query uses two complementary caching layers:
 **Redis query cache** — caches full serialized search responses at the coordinator. Cache hits bypass the entire pipeline (embed, fan-out, rerank) and return in ~1–2ms. Cache misses fall through to the full distributed search pipeline.
 
 **Linux page cache** — mmap-backed vector reads (`vectors.bin`) are automatically cached by the OS after first access. Subsequent vector lookups on cache misses hit RAM, not disk, eliminating I/O latency from the hot path.
+
+Turbo Query heavily exploits temporal locality through these caching layers, with partial spatial locality emerging naturally from OS 4KB page loading — each vector access loads ~2.6 vectors worth of data, warming neighboring docIDs in the page cache as a side effect.
+
 
 ### Singleflight
 
