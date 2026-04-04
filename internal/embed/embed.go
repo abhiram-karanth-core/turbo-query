@@ -34,6 +34,8 @@ func Init() error {
 }
 
 func GetEmbedding(query string) ([]float32, error) {
+    mu.Lock()
+    defer mu.Unlock()
     result, err := pipeline.RunPipeline([]string{query})
     if err != nil { return nil, err }
     return normalize(result.Embeddings[0]), nil
