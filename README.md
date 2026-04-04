@@ -122,7 +122,7 @@ final_score = 0.7 × BM25_norm + 0.3 × cosine_norm
 
 ## Performance
 
-Benchmarked on a laptop (WSL2, Intel i7-13650HX, 16GB RAM, WSL2 limited to 10GB) using wrk2, which corrects for coordinated omission.
+Benchmarked on a laptop (WSL2, Intel i7-13650HX, 16GB RAM, WSL2 limited to 12GB) using wrk2, which corrects for coordinated omission.
 
 ### Full Pipeline — No Cache
 
@@ -130,23 +130,20 @@ All queries salted to guarantee zero cache hits. Every request runs the complete
 
 ```bash
 docker exec turbo-query-redis-1 redis-cli FLUSHALL
-wrk2 -t4 -c20 -d60s -R 80 --latency -s search.lua http://localhost:8080/search
+wrk2 -t4 -c20 -d30s -R 80 --latency -s search.lua http://localhost:8080/search
 ```
 
 | Percentile | Latency |
 |---|---|
-| P50 | 66ms |
-| P75 | 77ms |
-| P90 | 89ms |
-| P95 | 102ms |
-| P99 | 125ms |
-| P99.9 | 198ms |
-| Max | 211ms |
+| P50 | 62ms |
+| P75 | 71ms |
+| P90 | 78ms |
+| P95 | 83ms |
+| P99 | 100ms |
+| P99.9 | 116ms |
+| Max | 121ms |
 
-**80 RPS, 20 concurrent connections, 60s duration, 4800 requests, 0 cache hits (deliberately — pure raw performance).**
-
-Latency scales with concurrency due to the hugot single-session constraint — at 50 concurrent 
-connections (same 80 RPS), P90 doubles to 212ms as goroutines queue behind the ONNX inference call.
+**80 RPS, 20 concurrent connections, 30s duration, 2400 requests, 0 cache hits (deliberately — pure raw performance).**
 
 ### Latency Breakdown (single request, no contention)
 
@@ -155,17 +152,11 @@ connections (same 80 RPS), P90 doubles to 212ms as goroutines queue behind the O
 | Redis cache hit | ~1–2ms |
 | ONNX embedding (MiniLM) | ~2–4ms |
 | BM25 + parallel fan-out + rerank (4 shards) | ~5–10ms |
-| **Full pipeline (cache miss, sequential)** | **~15–45ms** |
+| **Full pipeline (cache miss, sequential)** | **~10–30ms** |
 
 ---
 
 ## Known Limitations
-
-The hugot ONNX Runtime backend enforces a single active session globally, serializing all concurrent embedding calls internally. This limits full-pipeline throughput under high concurrency.
-
-A session pool was attempted using `yalue/onnxruntime_go` which supports multiple independent sessions. However, the required pure Go BERT tokenizer added ~14–20ms per call vs hugot's ~2–4ms, making it worse overall. The correct fix would pair `yalue/onnxruntime_go` with `daulet/tokenizers` rust bindings for fast tokenization alongside concurrent sessions.
-
-The shard pipeline — BM25, mmap vector reads, parallel fan-out, hybrid rerank — is not the bottleneck. All 4 shards respond within ~5–10ms under load.
 
 The Linux page cache warms at the BM25 retrieval level, not the semantic level. Lexically similar queries like "microsoft" → "microsoft stocks" return overlapping docIDs from BM25, so their vector pages are already warm in the page cache — effectively free RAM reads. Semantically similar but lexically different queries like "microsoft" → "bill gates company" return entirely different docIDs from BM25, causing cold page faults despite being conceptually identical. Page cache locality follows lexical similarity, not semantic similarity — an inherent tradeoff of BM25-first hybrid retrieval.
 
