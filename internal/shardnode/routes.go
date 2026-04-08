@@ -63,7 +63,11 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	searchReq := bleve.NewSearchRequestOptions(query, rerankWindow, 0, false)
 	searchReq.Fields = []string{"title", "text"}
+	s.searchSem <- struct{}{}
+	bleveStart := time.Now()
 	res, err := s.index.Search(searchReq)
+	<-s.searchSem
+	log.Printf("shard=%s bleve=%v", s.shardID, time.Since(bleveStart))
 	if err != nil {
 		http.Error(w, "search failed", http.StatusInternalServerError)
 		return

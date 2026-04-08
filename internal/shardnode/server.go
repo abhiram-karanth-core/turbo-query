@@ -14,10 +14,11 @@ import (
 )
 
 type Server struct {
-	port    int
-	shardID string
-	index   bleve.Index
-	mmapBuf mmap.MMap
+	port      int
+	shardID   string
+	index     bleve.Index
+	mmapBuf   mmap.MMap
+	searchSem chan struct{}
 }
 
 func (s *Server) Close() {
@@ -66,7 +67,7 @@ func NewServer() *http.Server {
 
 		mmapBuf: mmapBuf,
 	}
-
+	s.searchSem = make(chan struct{}, 4)
 	return &http.Server{
 		Addr:         fmt.Sprintf(":%d", port),
 		Handler:      s.RegisterRoutes(),
