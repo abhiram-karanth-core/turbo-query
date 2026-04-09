@@ -122,7 +122,7 @@ final_score = 0.7 × BM25_norm + 0.3 × cosine_norm
 
 ## Performance
 
-Benchmarked on a laptop (WSL2, Intel i7-13650HX, 16GB RAM, WSL2 limited to 12GB) using wrk2, which corrects for coordinated omission.
+Benchmarked on a laptop (WSL2, Intel i7-13650HX, 16GB RAM) using wrk2, which corrects for coordinated omission.
 
 ### Full Pipeline — No Cache
 
@@ -135,15 +135,14 @@ wrk2 -t4 -c20 -d30s -R 80 --latency -s search.lua http://localhost:8080/search
 
 | Percentile | Latency |
 |---|---|
-| P50 | 62ms |
-| P75 | 71ms |
-| P90 | 78ms |
-| P95 | 83ms |
-| P99 | 100ms |
-| P99.9 | 116ms |
-| Max | 121ms |
+| P50 | 51ms |
+| P75 | 61ms |
+| P90 | 68ms |
+| P99 | 78ms |
+| P99.9 | 83ms |
+| Max | 85ms |
 
-**80 RPS, 20 concurrent connections, 30s duration, 2400 requests, 0 cache hits (deliberately — pure raw performance).**
+**80 RPS sustained, 20 concurrent connections, 30s duration, 2400 requests, 0 cache hits — pure pipeline performance.**
 
 ### Latency Breakdown (single request, no contention)
 
@@ -152,7 +151,7 @@ wrk2 -t4 -c20 -d30s -R 80 --latency -s search.lua http://localhost:8080/search
 | Redis cache hit | ~1–2ms |
 | ONNX embedding (MiniLM) | ~2–4ms |
 | BM25 + parallel fan-out + rerank (4 shards) | ~5–10ms |
-| **Full pipeline (cache miss, sequential)** | **~10–30ms** |
+| **Full pipeline (cache miss, no contention)** | **~10–30ms** |
 
 ---
 
