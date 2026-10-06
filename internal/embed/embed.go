@@ -64,18 +64,22 @@ func batchEmbedWorker() {
 			select {
 			case req := <-embedQueue:
 				batch = append(batch, req)
-            case <-timer.C:
-                break drain
-			default:
+			case <-timer.C:
 				break drain
+			// default:
+			// 	break drain // bug fix: earlier i used default fall back if no queries/reqs were available
+							// because of which it fired immediately causing the batch to drain
+							// before 5ms batching window could elapse.
 			}
 		} 
-        timer.Stop()
+		timer.Stop()
 		queries := make([]string, len(batch))
 		for i, r := range batch {
 			queries[i] = r.query
 		}
+		// onnxStart := time.Now()
 		results, err := pipeline.RunPipeline(queries)
+		// log.Printf("onnx batch=%d latency=%v", len(batch), time.Since(onnxStart)) 
 		for i, r := range batch {
 			if err != nil {
 				r.result <- embedResult{err: err}
@@ -88,7 +92,10 @@ func batchEmbedWorker() {
 
 func GetEmbedding(query string) ([]float32, error) {
 	ch := make(chan embedResult, 1)
+	// enqueueTime := time.Now()      
 	embedQueue <- embedRequest{query: query, result: ch}
+	// queueWait := time.Since(enqueueTime)          
+    // log.Printf("queue wait=%v", queueWait) 
 	res := <-ch
 	return res.vec, res.err
 }
